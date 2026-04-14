@@ -10,6 +10,7 @@ mod fwcfg;
 mod mm;
 mod panic;
 mod ramfb;
+mod trap;
 mod uart;
 #[allow(dead_code)]
 mod virtio;
@@ -43,9 +44,13 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
     // Initialize framebuffer (ramfb via fw_cfg)
     framebuffer::init();
 
+    // Set up trap handling and timer interrupts
+    trap::init();
+
     println!();
     println!("[boot] Helios kernel initialized successfully.");
-    println!("[boot] Entering idle loop. Use Ctrl-A X to exit QEMU.");
+
+    println!("[boot] Entering idle loop.");
 
     // Idle loop
     loop {

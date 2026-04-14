@@ -60,3 +60,94 @@ pub fn sbi_shutdown() -> ! {
         unsafe { core::arch::asm!("wfi") };
     }
 }
+
+// ---------------------------------------------------------------------------
+// CSR helpers for trap handling
+// ---------------------------------------------------------------------------
+
+/// Read the `scause` CSR.
+#[inline(always)]
+pub fn read_scause() -> usize {
+    let val: usize;
+    unsafe { core::arch::asm!("csrr {}, scause", out(reg) val) };
+    val
+}
+
+/// Read the `stval` CSR.
+#[inline(always)]
+pub fn read_stval() -> usize {
+    let val: usize;
+    unsafe { core::arch::asm!("csrr {}, stval", out(reg) val) };
+    val
+}
+
+/// Read the `sepc` CSR.
+#[inline(always)]
+pub fn read_sepc() -> usize {
+    let val: usize;
+    unsafe { core::arch::asm!("csrr {}, sepc", out(reg) val) };
+    val
+}
+
+/// Write the `sepc` CSR.
+#[inline(always)]
+pub fn write_sepc(val: usize) {
+    unsafe { core::arch::asm!("csrw sepc, {}", in(reg) val) };
+}
+
+/// Read the `sstatus` CSR.
+#[inline(always)]
+pub fn read_sstatus() -> usize {
+    let val: usize;
+    unsafe { core::arch::asm!("csrr {}, sstatus", out(reg) val) };
+    val
+}
+
+/// Write the `sstatus` CSR.
+#[inline(always)]
+pub fn write_sstatus(val: usize) {
+    unsafe { core::arch::asm!("csrw sstatus, {}", in(reg) val) };
+}
+
+/// Read the `sie` CSR.
+#[inline(always)]
+pub fn read_sie() -> usize {
+    let val: usize;
+    unsafe { core::arch::asm!("csrr {}, sie", out(reg) val) };
+    val
+}
+
+/// Write the `sie` CSR.
+#[inline(always)]
+pub fn write_sie(val: usize) {
+    unsafe { core::arch::asm!("csrw sie, {}", in(reg) val) };
+}
+
+/// Write the `stvec` CSR.
+#[inline(always)]
+pub fn write_stvec(val: usize) {
+    unsafe { core::arch::asm!("csrw stvec, {}", in(reg) val) };
+}
+
+/// Read the current time via the `rdtime` pseudo-instruction.
+#[inline(always)]
+pub fn read_time() -> usize {
+    let val: usize;
+    unsafe { core::arch::asm!("rdtime {}", out(reg) val) };
+    val
+}
+
+/// SBI set timer (TIME extension, EID=0x54494D45, FID=0)
+/// Returns (error, value) from SBI.
+pub fn sbi_set_timer(stime_value: u64) -> (usize, usize) {
+    unsafe {
+        sbi_call(0x54494D45, 0, stime_value as usize, 0, 0)
+    }
+}
+
+/// Write the `stimecmp` CSR directly (Sstc extension, CSR 0x14D).
+/// This programs the timer comparator for S-mode timer interrupts.
+#[inline(always)]
+pub fn write_stimecmp(val: u64) {
+    unsafe { core::arch::asm!("csrw 0x14D, {}", in(reg) val as usize) };
+}
