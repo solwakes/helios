@@ -87,6 +87,7 @@ fn execute(line: &str) {
         "walk" => cmd_walk(arg1),
         "find" => cmd_find(arg1),
         "rm" => cmd_rm(arg1),
+        "render" => cmd_render(),
         _ => {
             crate::println!("Unknown command: {}", cmd);
             crate::println!("Type 'help' for available commands.");
@@ -116,6 +117,7 @@ fn cmd_help() {
     crate::println!("  walk <id>     - walk node edges");
     crate::println!("  find <name>   - find nodes by name");
     crate::println!("  rm <id>       - remove a node");
+    crate::println!("  render        - re-render graph on framebuffer");
 }
 
 fn cmd_info() {
@@ -508,5 +510,14 @@ fn cmd_rm(id_str: &str) {
         crate::println!("Removed node #{} \"{}\"", id, name.unwrap_or_default());
     } else {
         crate::println!("Node #{} not found", id);
+    }
+}
+
+fn cmd_render() {
+    if crate::framebuffer::get().is_some() {
+        crate::framebuffer::render_graph();
+        crate::println!("Graph rendered to framebuffer.");
+    } else {
+        crate::println!("No framebuffer available (UART-only mode).");
     }
 }

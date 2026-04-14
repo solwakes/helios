@@ -2,6 +2,7 @@
 /// "Everything is a memory" — nodes with typed content and labeled edges.
 
 pub mod init;
+pub mod render;
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
