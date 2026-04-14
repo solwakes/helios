@@ -14,6 +14,19 @@ const TICK_REPORT_INTERVAL: usize = 10;
 /// Global tick counter.
 static TICK_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+/// Whether to suppress tick printing (set once shell is active).
+static SHELL_ACTIVE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Mark the shell as active, suppressing timer tick output.
+pub fn set_shell_active() {
+    SHELL_ACTIVE.store(true, Ordering::Relaxed);
+}
+
+/// Return the current tick count.
+pub fn tick_count() -> usize {
+    TICK_COUNT.load(Ordering::Relaxed)
+}
+
 // ---------------------------------------------------------------------------
 // TrapFrame — saved register state
 // ---------------------------------------------------------------------------
@@ -196,7 +209,7 @@ pub extern "C" fn trap_handler(frame: &mut TrapFrame) {
 fn handle_timer_interrupt() {
     let count = TICK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
 
-    if count % TICK_REPORT_INTERVAL == 0 {
+    if count % TICK_REPORT_INTERVAL == 0 && !SHELL_ACTIVE.load(Ordering::Relaxed) {
         crate::println!("[timer] tick {}", count);
     }
 

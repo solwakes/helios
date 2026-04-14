@@ -10,6 +10,7 @@ mod fwcfg;
 mod mm;
 mod panic;
 mod ramfb;
+mod shell;
 mod trap;
 mod uart;
 #[allow(dead_code)]
@@ -49,11 +50,18 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
 
     println!();
     println!("[boot] Helios kernel initialized successfully.");
+    println!();
 
-    println!("[boot] Entering idle loop.");
+    // Start the interactive shell
+    shell::init();
 
-    // Idle loop
+    // Idle loop: wfi wakes on timer interrupt, then poll UART
     loop {
         unsafe { core::arch::asm!("wfi") };
+
+        // Drain any UART input and feed to the shell
+        while let Some(byte) = uart::getc() {
+            shell::process_byte(byte);
+        }
     }
 }

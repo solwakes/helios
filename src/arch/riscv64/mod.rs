@@ -61,6 +61,17 @@ pub fn sbi_shutdown() -> ! {
     }
 }
 
+/// Reboot via SBI SRST extension (reset_type=0 warm, reason=0)
+pub fn sbi_reboot() -> ! {
+    // SRST EID=0x53525354, FID=0, reset_type=1 (cold reboot), reason=0
+    unsafe {
+        sbi_call(0x53525354, 0, 1, 0, 0);
+    }
+    loop {
+        unsafe { core::arch::asm!("wfi") };
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CSR helpers for trap handling
 // ---------------------------------------------------------------------------

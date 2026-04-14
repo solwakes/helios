@@ -12,6 +12,7 @@ const LCR: usize = 3; // Line Control Register
 const LSR: usize = 5; // Line Status Register
 
 const LSR_TX_EMPTY: u8 = 0x20;
+const LSR_DATA_READY: u8 = 0x01;
 
 pub struct Uart {
     base: usize,
@@ -49,6 +50,26 @@ impl Uart {
         }
     }
 
+    /// Check if data is available in the receive buffer.
+    pub fn has_data(&self) -> bool {
+        unsafe {
+            let base = self.base as *mut u8;
+            base.add(LSR).read_volatile() & LSR_DATA_READY != 0
+        }
+    }
+
+    /// Non-blocking read of a single byte from the receive buffer.
+    pub fn getc(&self) -> Option<u8> {
+        if self.has_data() {
+            unsafe {
+                let base = self.base as *mut u8;
+                Some(base.add(RBR).read_volatile())
+            }
+        } else {
+            None
+        }
+    }
+
     /// Write a string
     pub fn puts(&self, s: &str) {
         for byte in s.bytes() {
@@ -73,6 +94,14 @@ pub fn puts(s: &str) {
 
 pub fn putc(c: u8) {
     UART.putc(c);
+}
+
+pub fn has_data() -> bool {
+    UART.has_data()
+}
+
+pub fn getc() -> Option<u8> {
+    UART.getc()
 }
 
 /// Simple print macro
