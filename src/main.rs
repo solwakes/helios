@@ -7,6 +7,7 @@ mod alloc_impl;
 mod arch;
 mod framebuffer;
 mod fwcfg;
+mod mm;
 mod panic;
 mod ramfb;
 mod uart;
@@ -35,6 +36,9 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
     println!();
     println!("[boot] Hart {} reporting for duty", hart_id);
     println!("[boot] Helios v{}", env!("CARGO_PKG_VERSION"));
+
+    // Set up Sv39 identity-mapped page tables and enable paging
+    mm::init();
 
     // Initialize framebuffer (ramfb via fw_cfg)
     framebuffer::init();

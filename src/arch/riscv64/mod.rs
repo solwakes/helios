@@ -27,6 +27,30 @@ pub fn sbi_console_putchar(ch: u8) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// CSR helpers for virtual memory
+// ---------------------------------------------------------------------------
+
+/// Read the `satp` CSR.
+#[inline(always)]
+pub fn read_satp() -> usize {
+    let val: usize;
+    unsafe { core::arch::asm!("csrr {}, satp", out(reg) val) };
+    val
+}
+
+/// Write the `satp` CSR.
+#[inline(always)]
+pub fn write_satp(val: usize) {
+    unsafe { core::arch::asm!("csrw satp, {}", in(reg) val) };
+}
+
+/// Full TLB flush (`sfence.vma zero, zero`).
+#[inline(always)]
+pub fn sfence_vma() {
+    unsafe { core::arch::asm!("sfence.vma zero, zero") };
+}
+
 /// Shutdown via SBI SRST extension
 pub fn sbi_shutdown() -> ! {
     unsafe {
