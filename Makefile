@@ -1,9 +1,10 @@
+CARGO := $(HOME)/.cargo/bin/cargo
 KERNEL := target/riscv64gc-unknown-none-elf/release/helios
 
 .PHONY: build run run-gui clean
 
 build:
-	cargo build --release
+	$(CARGO) build --release
 
 run: build
 	qemu-system-riscv64 \
@@ -18,8 +19,8 @@ run-gui: build
 		-machine virt \
 		-bios default \
 		-serial stdio \
-		-device virtio-gpu-device \
+		-device ramfb \
 		-kernel $(KERNEL)
 
 clean:
-	cargo clean
+	$(CARGO) clean

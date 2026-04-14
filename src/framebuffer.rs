@@ -1,11 +1,8 @@
 /// Framebuffer abstraction for Helios.
 ///
-/// For M1, we implement a simple VirtIO GPU framebuffer using the virtio-gpu
-/// device on QEMU's virt machine. If this proves too complex, we fall back
-/// to UART-only output and defer graphics to M2.
-///
-/// For now, this module provides a software framebuffer that can be used
-/// once we have a display device initialized.
+/// Uses ramfb (a simple QEMU display device) to provide a framebuffer.
+/// The guest allocates memory, writes a config via fw_cfg, and QEMU displays it.
+/// No virtqueues or command protocols needed.
 
 /// A simple RGBA pixel
 #[derive(Clone, Copy)]
@@ -164,23 +161,43 @@ pub fn draw_string(fb: &Framebuffer, s: &str, x: u32, y: u32, scale: u32, color:
 }
 
 // =============================================================================
-// VirtIO GPU initialization (M1 attempt — may be deferred to M2)
+// ramfb initialisation + splash screen
 // =============================================================================
 
-/// For M1, VirtIO GPU setup is complex (requires virtqueue setup, resource
-/// creation, scanout attachment, etc.). We'll document the approach here
-/// and implement it properly in M2.
-///
-/// What's needed for M2:
-/// 1. VirtIO device discovery via MMIO (base at 0x10008000 on virt machine)
-/// 2. Virtqueue initialization (descriptor table, available ring, used ring)
-/// 3. GPU resource creation (VIRTIO_GPU_CMD_RESOURCE_CREATE_2D)
-/// 4. Backing storage attachment (VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING)
-/// 5. Scanout setup (VIRTIO_GPU_CMD_SET_SCANOUT)
-/// 6. Transfer & flush (VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D, VIRTIO_GPU_CMD_RESOURCE_FLUSH)
-
 pub fn init() {
-    // VirtIO GPU initialization deferred to M2.
-    // For M1, we output via UART only.
-    crate::println!("[fb] Framebuffer initialization deferred to M2 (VirtIO GPU)");
+    crate::println!("[fb] Initialising ramfb framebuffer...");
+
+    let info = match crate::ramfb::init() {
+        Some(info) => info,
+        None => {
+            crate::println!("[fb] No ramfb available — UART only");
+            return;
+        }
+    };
+
+    let fb = Framebuffer {
+        base: info.fb_ptr,
+        width: info.width,
+        height: info.height,
+        stride: info.width * 4,
+        bpp: 4,
+    };
+
+    // Dark indigo background (#1a1a2e)
+    let bg = Pixel::new(0x1a, 0x1a, 0x2e);
+    fb.fill(bg);
+
+    // Golden / amber text (#f0a500)
+    let gold = Pixel::new(0xf0, 0xa5, 0x00);
+    let text = "HELIOS";
+    let scale: u32 = 8; // 8×8 font × 8 = 64px tall
+    let char_w = 8 * scale + scale; // pixel width per glyph (with gap)
+    let text_w = text.len() as u32 * char_w - scale; // subtract trailing gap
+    let text_h = 8 * scale;
+    let x = (fb.width.saturating_sub(text_w)) / 2;
+    let y = (fb.height.saturating_sub(text_h)) / 2;
+    draw_string(&fb, text, x, y, scale, gold);
+
+    // ramfb is a direct framebuffer — no flush needed, pixels are live in RAM
+    crate::println!("[fb] Splash rendered. Framebuffer ready.");
 }
