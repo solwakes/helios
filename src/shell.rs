@@ -88,6 +88,7 @@ fn execute(line: &str) {
         "find" => cmd_find(arg1),
         "rm" => cmd_rm(arg1),
         "render" => cmd_render(),
+        "status" => cmd_status(),
         _ => {
             crate::println!("Unknown command: {}", cmd);
             crate::println!("Type 'help' for available commands.");
@@ -118,6 +119,7 @@ fn cmd_help() {
     crate::println!("  find <name>   - find nodes by name");
     crate::println!("  rm <id>       - remove a node");
     crate::println!("  render        - re-render graph on framebuffer");
+    crate::println!("  status        - live system overview");
 }
 
 fn cmd_info() {
@@ -294,6 +296,7 @@ fn cmd_node(id_str: &str) {
             return;
         }
     };
+    crate::graph::live::refresh_system_nodes();
     let g = crate::graph::get();
     let node = match g.get_node(id) {
         Some(n) => n,
@@ -413,6 +416,7 @@ fn cmd_cat(id_str: &str) {
             return;
         }
     };
+    crate::graph::live::refresh_system_nodes();
     let g = crate::graph::get();
     match g.get_node(id) {
         Some(node) => {
@@ -448,6 +452,7 @@ fn cmd_walk(id_str: &str) {
             return;
         }
     };
+    crate::graph::live::refresh_system_nodes();
     let g = crate::graph::get();
     let node = match g.get_node(id) {
         Some(n) => n,
@@ -520,4 +525,26 @@ fn cmd_render() {
     } else {
         crate::println!("No framebuffer available (UART-only mode).");
     }
+}
+
+fn cmd_status() {
+    let time = arch::read_time();
+    let uptime_s = time / TIMER_FREQ;
+    let uptime_frac = (time % TIMER_FREQ) / (TIMER_FREQ / 10);
+    let ticks = trap::tick_count();
+    let used_kib = crate::alloc_impl::heap_used() / 1024;
+    let total_kib = crate::alloc_impl::heap_total() / 1024;
+    let g = crate::graph::get();
+    let nodes = g.node_count();
+    let edges = g.edge_count();
+
+    crate::println!(
+        "Helios v{} | Hart 0 | Uptime: {}.{}s",
+        env!("CARGO_PKG_VERSION"),
+        uptime_s,
+        uptime_frac
+    );
+    crate::println!("Memory: ~{} KiB used / {} KiB heap", used_kib, total_kib);
+    crate::println!("Graph: {} nodes, {} edges", nodes, edges);
+    crate::println!("Timer: {} ticks @ 10 MHz", ticks);
 }

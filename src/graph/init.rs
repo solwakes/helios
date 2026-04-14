@@ -34,9 +34,20 @@ pub fn bootstrap() {
     g.add_edge(dev_id, "child", uart_id);
     g.add_edge(dev_id, "child", fb_id);
 
-    // Set system node content
-    if let Some(node) = g.get_node_mut(sys_id) {
-        let info = alloc::format!("Helios v{}, RISC-V 64-bit", env!("CARGO_PKG_VERSION"));
-        node.content = info.into_bytes();
-    }
+    // ID 6: memory
+    let mem_id = g.create_node(NodeType::System, "memory");
+
+    // ID 7: timer
+    let timer_id = g.create_node(NodeType::System, "timer");
+
+    // ID 8: cpu
+    let cpu_id = g.create_node(NodeType::System, "cpu");
+
+    // system -> memory, system -> timer, system -> cpu
+    g.add_edge(sys_id, "child", mem_id);
+    g.add_edge(sys_id, "child", timer_id);
+    g.add_edge(sys_id, "child", cpu_id);
+
+    // Populate all system nodes with initial live data
+    super::live::refresh_system_nodes();
 }

@@ -30,6 +30,29 @@ fn heap_end() -> usize {
     unsafe { &_heap_end as *const u8 as usize }
 }
 
+/// Return the number of heap bytes currently allocated (bump pointer - heap start).
+pub fn heap_used() -> usize {
+    unsafe {
+        let next = *ALLOCATOR.next.get();
+        if next == 0 { 0 } else { next - heap_start() }
+    }
+}
+
+/// Return the total heap size in bytes.
+pub fn heap_total() -> usize {
+    heap_end() - heap_start()
+}
+
+/// Return the heap start address.
+pub fn heap_start_addr() -> usize {
+    heap_start()
+}
+
+/// Return the heap end address.
+pub fn heap_end_addr() -> usize {
+    heap_end()
+}
+
 unsafe impl GlobalAlloc for BumpAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let next = self.next.get();
