@@ -1,7 +1,9 @@
 /// fw_cfg MMIO driver for QEMU virt (RISC-V).
 ///
-/// The fw_cfg device provides a simple interface for the guest to read/write
-/// configuration data. On RISC-V virt, it's at MMIO address 0x10100000.
+/// MMIO layout (from QEMU hw/riscv/virt.c, DTB fw-cfg@10100000):
+///   Data register:     0x10100000 (width 8, DEVICE_BIG_ENDIAN)
+///   Selector register: 0x10100008 (width 2, DEVICE_BIG_ENDIAN)
+///   DMA register:      0x10100010 (width 8, DEVICE_BIG_ENDIAN)
 
 use core::ptr;
 
@@ -13,25 +15,11 @@ const FWCFG_DMA: usize = FWCFG_BASE + 0x10;
 const FWCFG_SIG_SELECT: u16 = 0x0000;
 const FWCFG_DIR_SELECT: u16 = 0x0019;
 
-/// A fw_cfg file directory entry.
-#[derive(Clone, Copy)]
-pub struct FwCfgFile {
-    pub size: u32,
-    pub select: u16,
-    pub name: [u8; 56],
-}
-
-/// DMA access descriptor — must be 16-byte aligned.
-#[repr(C, align(16))]
-struct FwCfgDmaAccess {
-    control: u32,
-    length: u32,
-    address: u64,
-}
-
 /// Select a fw_cfg entry by writing to the selector register.
 fn select(entry: u16) {
     unsafe {
+        // DEVICE_BIG_ENDIAN: QEMU byte-swaps 16-bit writes on LE targets.
+        // We apply .to_be() so the double-swap gives the device the raw value.
         ptr::write_volatile(FWCFG_SEL as *mut u16, entry.to_be());
     }
 }
@@ -60,13 +48,11 @@ pub fn verify_signature() -> bool {
 pub fn find_file(name: &str) -> Option<(u16, u32)> {
     select(FWCFG_DIR_SELECT);
 
-    // Read 4-byte big-endian count
     let mut count_buf = [0u8; 4];
     read_bytes(&mut count_buf);
     let count = u32::from_be_bytes(count_buf);
 
     for _ in 0..count {
-        // Each entry: 4-byte size (BE), 2-byte select (BE), 2-byte reserved, 56-byte name
         let mut size_buf = [0u8; 4];
         read_bytes(&mut size_buf);
         let size = u32::from_be_bytes(size_buf);
@@ -81,7 +67,6 @@ pub fn find_file(name: &str) -> Option<(u16, u32)> {
         let mut fname = [0u8; 56];
         read_bytes(&mut fname);
 
-        // Compare name (null-terminated)
         let fname_len = fname.iter().position(|&b| b == 0).unwrap_or(56);
         let fname_str = &fname[..fname_len];
         if fname_str == name.as_bytes() {
@@ -91,49 +76,65 @@ pub fn find_file(name: &str) -> Option<(u16, u32)> {
     None
 }
 
-/// Write data to a fw_cfg file entry via DMA.
+/// Read data from a fw_cfg file entry via the data register.
+pub fn read_file(file_select: u16, buf: &mut [u8]) {
+    select(file_select);
+    read_bytes(buf);
+}
+
+/// Write data to a fw_cfg file via DMA.
 ///
-/// `file_select` is the selector for the file (from find_file).
-/// `data` is a pointer to the data buffer in guest physical memory.
-/// `len` is the number of bytes to write.
-///
-/// Safety: `data` must point to valid guest-physical memory of at least `len` bytes.
-/// The DMA descriptor is allocated on the stack with proper alignment.
+/// The DMA descriptor and data must be in guest-physical memory.
+/// All DMA descriptor fields use big-endian encoding.
 pub fn dma_write(file_select: u16, data: *const u8, len: u32) -> bool {
-    // Build the DMA access descriptor
-    // control: bits[31:16] = selector, bit 4 = select, bit 1 = write
-    let control: u32 = ((file_select as u32) << 16) | (1 << 4) | (1 << 1);
+    // DMA control: selector in top 16 bits, SELECT=0x08, WRITE=0x10
+    let control: u32 = ((file_select as u32) << 16) | 0x18;
 
-    let mut dma = FwCfgDmaAccess {
-        control: control.to_be(),
-        length: len.to_be(),
-        address: (data as u64).to_be(),
-    };
+    // Allocate the DMA descriptor on the heap for DMA safety (16-byte aligned)
+    let layout = core::alloc::Layout::from_size_align(16, 16).unwrap();
+    let dma_ptr = unsafe { alloc::alloc::alloc_zeroed(layout) };
+    if dma_ptr.is_null() {
+        return false;
+    }
 
-    // Write the physical address of the DMA descriptor to the DMA register
-    let dma_addr = &mut dma as *mut FwCfgDmaAccess as u64;
-
-    // Ensure all memory writes are visible before triggering DMA
-    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-
+    // Write DMA descriptor fields in big-endian (as raw bytes)
     unsafe {
-        ptr::write_volatile(FWCFG_DMA as *mut u64, dma_addr.to_be());
+        // control: u32 BE at offset 0
+        ptr::copy_nonoverlapping(control.to_be_bytes().as_ptr(), dma_ptr, 4);
+        // length: u32 BE at offset 4
+        ptr::copy_nonoverlapping(len.to_be_bytes().as_ptr(), dma_ptr.add(4), 4);
+        // address: u64 BE at offset 8
+        ptr::copy_nonoverlapping((data as u64).to_be_bytes().as_ptr(), dma_ptr.add(8), 8);
+    }
+
+    let dma_phys = dma_ptr as u64;
+
+    // Ensure descriptor and data are visible before triggering DMA
+    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+    // RISC-V fence for I/O ordering
+    unsafe { core::arch::asm!("fence iorw, iorw") };
+
+    // Write DMA descriptor address to the DMA register.
+    // DEVICE_BIG_ENDIAN + our .to_be() = device sees raw address.
+    unsafe {
+        ptr::write_volatile(FWCFG_DMA as *mut u64, dma_phys.to_be());
     }
 
     // Poll until control field clears (DMA complete)
-    // The device zeroes control on success, sets bit 0 on error
-    for _ in 0..1_000_000 {
+    for i in 0..1_000_000u32 {
         core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-        let ctrl = u32::from_be(unsafe {
-            ptr::read_volatile(&dma.control as *const u32)
-        });
+        // Read control field (first 4 bytes of DMA descriptor, big-endian)
+        let raw = unsafe { ptr::read_volatile(dma_ptr as *const u32) };
+        let ctrl = u32::from_be_bytes(raw.to_ne_bytes());
         if ctrl == 0 {
             return true;
         }
         if ctrl & 1 != 0 {
-            return false; // error
+            crate::println!("[fwcfg] DMA error (ctrl={:#x})", ctrl);
+            return false;
         }
         core::hint::spin_loop();
     }
-    false // timeout
+    crate::println!("[fwcfg] DMA timeout");
+    false
 }

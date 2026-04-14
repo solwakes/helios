@@ -36,22 +36,6 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
     println!("[boot] Hart {} reporting for duty", hart_id);
     println!("[boot] Helios v{}", env!("CARGO_PKG_VERSION"));
 
-    // Test allocator
-    {
-        extern "C" {
-            static _heap_start: u8;
-            static _heap_end: u8;
-        }
-        let hs = unsafe { &_heap_start as *const u8 as usize };
-        let he = unsafe { &_heap_end as *const u8 as usize };
-        println!("[heap] range: {:#x} - {:#x} ({} KiB)", hs, he, (he - hs) / 1024);
-
-        let layout = core::alloc::Layout::from_size_align(64, 8).unwrap();
-        println!("[heap] attempting alloc...");
-        let ptr = unsafe { alloc::alloc::alloc(layout) };
-        println!("[heap] alloc returned: {:#x}", ptr as usize);
-    }
-
     // Initialize framebuffer (ramfb via fw_cfg)
     framebuffer::init();
 

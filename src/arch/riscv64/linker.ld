@@ -46,6 +46,12 @@ SECTIONS
     . += 128K;
     PROVIDE(_stack_end = .);
 
+    /* Heap: 8 MiB for dynamic allocation */
+    . = ALIGN(4096);
+    PROVIDE(_heap_start = .);
+    . += 8M;
+    PROVIDE(_heap_end = .);
+
     /DISCARD/ : {
         *(.eh_frame)
         *(.note .note.*)
