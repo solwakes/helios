@@ -7,6 +7,7 @@ mod alloc_impl;
 mod arch;
 mod framebuffer;
 mod fwcfg;
+mod graph;
 mod mm;
 mod panic;
 mod ramfb;
@@ -41,6 +42,9 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
 
     // Set up Sv39 identity-mapped page tables and enable paging
     mm::init();
+
+    // Initialize the graph store
+    graph::init();
 
     // Initialize framebuffer (ramfb via fw_cfg)
     framebuffer::init();
