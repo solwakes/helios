@@ -101,6 +101,36 @@ impl Framebuffer {
             self.put_pixel(x, y + dy, pixel);
         }
     }
+
+    /// Draw an arbitrary line using Bresenham's algorithm
+    pub fn draw_line(&self, x0: u32, y0: u32, x1: u32, y1: u32, pixel: Pixel) {
+        let mut x0 = x0 as i32;
+        let mut y0 = y0 as i32;
+        let x1 = x1 as i32;
+        let y1 = y1 as i32;
+
+        let dx = (x1 - x0).abs();
+        let dy = -(y1 - y0).abs();
+        let sx: i32 = if x0 < x1 { 1 } else { -1 };
+        let sy: i32 = if y0 < y1 { 1 } else { -1 };
+        let mut err = dx + dy;
+
+        loop {
+            if x0 >= 0 && y0 >= 0 {
+                self.put_pixel(x0 as u32, y0 as u32, pixel);
+            }
+            if x0 == x1 && y0 == y1 { break; }
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                x0 += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y0 += sy;
+            }
+        }
+    }
 }
 
 // =============================================================================
