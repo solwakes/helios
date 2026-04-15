@@ -184,6 +184,19 @@ impl VirtioInput {
 
     /// Handle a single key event.
     fn handle_key(&mut self, code: u16, value: u32) {
+        // In DOOM mode, forward raw keycodes (both press and release) to doom
+        if crate::doom::is_doom_mode() {
+            // value: 1=press, 0=release, 2=repeat (treat repeat as press)
+            if value == 2 {
+                return; // ignore repeat in doom mode
+            }
+            let doom_key = crate::doom::evdev_to_doom(code);
+            if doom_key != 0 {
+                crate::doom::push_key_event(value == 1, doom_key);
+            }
+            return;
+        }
+
         // Track shift state on both press and release
         if code == KEY_LEFTSHIFT || code == KEY_RIGHTSHIFT {
             self.shift_held = value != 0; // 1=press, 0=release

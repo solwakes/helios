@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Sol"]
 description = "Helios — an OS where everything is a memory"
+build = "build.rs"
 
 [[bin]]
 name = "helios"

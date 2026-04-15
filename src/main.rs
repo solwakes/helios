@@ -19,6 +19,7 @@ mod trap;
 mod uart;
 #[allow(dead_code)]
 mod virtio;
+mod doom;
 
 use arch::riscv64 as arch_impl;
 

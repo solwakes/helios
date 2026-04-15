@@ -338,6 +338,8 @@ fn execute(line: &str) {
         "edit" => cmd_edit(arg1),
         // Console commands
         "tty" | "console" => cmd_tty(),
+        // DOOM
+        "doom" => crate::doom::start(),
         _ => {
             crate::println!("Unknown command: {}", cmd);
             crate::println!("Type 'help' for available commands.");

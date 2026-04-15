@@ -46,10 +46,10 @@ SECTIONS
     . += 128K;
     PROVIDE(_stack_end = .);
 
-    /* Heap: 8 MiB for dynamic allocation */
+    /* Heap: 32 MiB for dynamic allocation (Doom needs ~16MB+) */
     . = ALIGN(4096);
     PROVIDE(_heap_start = .);
-    . += 8M;
+    . += 32M;
     PROVIDE(_heap_end = .);
 
     /DISCARD/ : {
