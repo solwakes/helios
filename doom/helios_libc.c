@@ -739,10 +739,110 @@ int fileno(FILE *fp) {
 
 int errno = 0;
 
+/* ========================================================================
+ * setjmp / longjmp — minimal RISC-V 64 implementation for doom exit
+ * ======================================================================== */
+
+/* jmp_buf: save ra, sp, s0-s11, fs0-fs11 = 26 registers × 8 bytes = 208 bytes */
+typedef unsigned long helios_jmp_buf[26];
+
+static helios_jmp_buf doom_exit_jmp;
+static int doom_exit_jmp_set = 0;
+
+static int helios_setjmp(helios_jmp_buf buf) __attribute__((returns_twice));
+static int helios_setjmp(helios_jmp_buf buf) {
+    __asm__ volatile(
+        "sd ra,   0(%0)\n"
+        "sd sp,   8(%0)\n"
+        "sd s0,  16(%0)\n"
+        "sd s1,  24(%0)\n"
+        "sd s2,  32(%0)\n"
+        "sd s3,  40(%0)\n"
+        "sd s4,  48(%0)\n"
+        "sd s5,  56(%0)\n"
+        "sd s6,  64(%0)\n"
+        "sd s7,  72(%0)\n"
+        "sd s8,  80(%0)\n"
+        "sd s9,  88(%0)\n"
+        "sd s10, 96(%0)\n"
+        "sd s11,104(%0)\n"
+        "fsd fs0, 112(%0)\n"
+        "fsd fs1, 120(%0)\n"
+        "fsd fs2, 128(%0)\n"
+        "fsd fs3, 136(%0)\n"
+        "fsd fs4, 144(%0)\n"
+        "fsd fs5, 152(%0)\n"
+        "fsd fs6, 160(%0)\n"
+        "fsd fs7, 168(%0)\n"
+        "fsd fs8, 176(%0)\n"
+        "fsd fs9, 184(%0)\n"
+        "fsd fs10,192(%0)\n"
+        "fsd fs11,200(%0)\n"
+        : /* no output */
+        : "r"(buf)
+        : "memory"
+    );
+    return 0;
+}
+
+static void helios_longjmp(helios_jmp_buf buf, int val) __attribute__((noreturn));
+static void helios_longjmp(helios_jmp_buf buf, int val) {
+    /* Ensure we return nonzero from setjmp */
+    if (val == 0) val = 1;
+
+    /* Put return value in a0 before restoring registers */
+    register long a0 __asm__("a0") = val;
+
+    __asm__ volatile(
+        "ld ra,   0(%1)\n"
+        "ld sp,   8(%1)\n"
+        "ld s0,  16(%1)\n"
+        "ld s1,  24(%1)\n"
+        "ld s2,  32(%1)\n"
+        "ld s3,  40(%1)\n"
+        "ld s4,  48(%1)\n"
+        "ld s5,  56(%1)\n"
+        "ld s6,  64(%1)\n"
+        "ld s7,  72(%1)\n"
+        "ld s8,  80(%1)\n"
+        "ld s9,  88(%1)\n"
+        "ld s10, 96(%1)\n"
+        "ld s11,104(%1)\n"
+        "fld fs0, 112(%1)\n"
+        "fld fs1, 120(%1)\n"
+        "fld fs2, 128(%1)\n"
+        "fld fs3, 136(%1)\n"
+        "fld fs4, 144(%1)\n"
+        "fld fs5, 152(%1)\n"
+        "fld fs6, 160(%1)\n"
+        "fld fs7, 168(%1)\n"
+        "fld fs8, 176(%1)\n"
+        "fld fs9, 184(%1)\n"
+        "fld fs10,192(%1)\n"
+        "fld fs11,200(%1)\n"
+        "ret\n"
+        : /* no output */
+        : "r"(a0), "r"(buf)
+        : "memory"
+    );
+    __builtin_unreachable();
+}
+
+/* Called from Rust before entering the doom tick loop */
+int helios_doom_setjmp(void) {
+    doom_exit_jmp_set = 1;
+    return helios_setjmp(doom_exit_jmp);
+}
+
 void exit(int code) {
     char buf[64];
     snprintf(buf, sizeof(buf), "DOOM EXIT (code %d)\n", code);
     uart_puts(buf);
+    if (doom_exit_jmp_set) {
+        doom_exit_jmp_set = 0;
+        helios_longjmp(doom_exit_jmp, code ? code : 1);
+    }
+    /* Fallback if setjmp wasn't set */
     while (1) {
         __asm__ volatile("wfi");
     }
@@ -750,6 +850,10 @@ void exit(int code) {
 
 void abort(void) {
     uart_puts("DOOM ABORT\n");
+    if (doom_exit_jmp_set) {
+        doom_exit_jmp_set = 0;
+        helios_longjmp(doom_exit_jmp, -1);
+    }
     while (1) {
         __asm__ volatile("wfi");
     }

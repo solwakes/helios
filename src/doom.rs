@@ -33,6 +33,10 @@ pub fn is_doom_mode() -> bool {
     unsafe { DOOM_MODE }
 }
 
+extern "C" {
+    fn helios_doom_setjmp() -> i32;
+}
+
 // ─── Key event ring buffer ───────────────────────────────────────────────
 
 const KEY_QUEUE_SIZE: usize = 64;
@@ -374,6 +378,17 @@ pub fn start() {
     let arg1 = b"-iwad\0".as_ptr();
     let arg2 = b"doom1.wad\0".as_ptr();
     let argv: [*const u8; 3] = [arg0, arg1, arg2];
+
+    // Set up longjmp landing pad — if DOOM calls exit(), we'll land back here
+    let exit_code = unsafe { helios_doom_setjmp() };
+    if exit_code != 0 {
+        // We got here via longjmp from exit() — DOOM has quit
+        crate::println!("[doom] DOOM exited with code {}", exit_code);
+        unsafe { DOOM_MODE = false; }
+        crate::framebuffer::render_graph();
+        crate::println!("[doom] Returned to Helios.");
+        return;
+    }
 
     unsafe {
         doomgeneric_Create(3, argv.as_ptr());
