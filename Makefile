@@ -27,6 +27,7 @@ run-gui: build $(DISK)
 		-bios default \
 		-serial stdio \
 		-device ramfb \
+		-device virtio-keyboard-device \
 		-drive file=$(DISK),format=raw,if=none,id=hd0 \
 		-device virtio-blk-device,drive=hd0 \
 		-global virtio-mmio.force-legacy=false \
