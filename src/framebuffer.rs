@@ -412,7 +412,9 @@ pub fn init() {
 /// Re-render the graph on the framebuffer. Called from init and from shell.
 pub fn render_graph() {
     if let Some(fb) = get() {
+        let prev = crate::arch::riscv64::interrupts_disable();
         let graph = crate::graph::get();
         crate::graph::render::render(fb, graph);
+        crate::arch::riscv64::interrupts_restore(prev);
     }
 }

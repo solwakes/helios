@@ -120,6 +120,24 @@ pub fn write_sstatus(val: usize) {
     unsafe { core::arch::asm!("csrw sstatus, {}", in(reg) val) };
 }
 
+/// Disable supervisor interrupts, returning the previous sstatus value.
+#[inline(always)]
+pub fn interrupts_disable() -> usize {
+    let prev = read_sstatus();
+    write_sstatus(prev & !0x2); // clear SIE bit (bit 1)
+    prev
+}
+
+/// Restore supervisor interrupts to a previous state.
+#[inline(always)]
+pub fn interrupts_restore(prev_sstatus: usize) {
+    if prev_sstatus & 0x2 != 0 {
+        // SIE was set before — re-enable
+        let cur = read_sstatus();
+        write_sstatus(cur | 0x2);
+    }
+}
+
 /// Read the `sie` CSR.
 #[inline(always)]
 pub fn read_sie() -> usize {
