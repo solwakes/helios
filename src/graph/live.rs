@@ -75,14 +75,16 @@ fn refresh_memory_info() {
     let g = crate::graph::get_mut();
     if let Some(node) = g.get_node_mut(NODE_MEMORY) {
         let used = alloc_impl::heap_used();
+        let free = alloc_impl::heap_free();
         let total = alloc_impl::heap_total();
         let satp = arch::read_satp();
         let info = format!(
-            "Heap: {:#x} - {:#x} ({} KiB)\nUsed: ~{} KiB\nPage tables: Sv39\nSATP: {:#018x}",
+            "Heap: {:#x} - {:#x} ({} KiB)\nUsed: ~{} KiB\nFree: ~{} KiB\nPage tables: Sv39\nSATP: {:#018x}",
             alloc_impl::heap_start_addr(),
             alloc_impl::heap_end_addr(),
             total / 1024,
             used / 1024,
+            free / 1024,
             satp
         );
         node.content = info.into_bytes();

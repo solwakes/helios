@@ -533,6 +533,7 @@ fn cmd_status() {
     let uptime_frac = (time % TIMER_FREQ) / (TIMER_FREQ / 10);
     let ticks = trap::tick_count();
     let used_kib = crate::alloc_impl::heap_used() / 1024;
+    let free_kib = crate::alloc_impl::heap_free() / 1024;
     let total_kib = crate::alloc_impl::heap_total() / 1024;
     let g = crate::graph::get();
     let nodes = g.node_count();
@@ -544,7 +545,7 @@ fn cmd_status() {
         uptime_s,
         uptime_frac
     );
-    crate::println!("Memory: ~{} KiB used / {} KiB heap", used_kib, total_kib);
+    crate::println!("Memory: ~{} KiB used / {} KiB free / {} KiB heap", used_kib, free_kib, total_kib);
     crate::println!("Graph: {} nodes, {} edges", nodes, edges);
     crate::println!("Timer: {} ticks @ 10 MHz", ticks);
 }
