@@ -123,6 +123,33 @@ helios> render    # switch back to graph tree visualization
 helios> nav       # interactive graph navigator (arrow keys, enter, d for details)
 ```
 
+### scripting
+
+```
+helios> mknode text startup
+Created node #14 "startup" (text)
+
+helios> edit 14
+Editing node #14 "startup". Enter lines, empty line to finish.
+| # boot check script
+| status
+| gql type=system
+| ps
+| 
+Node #14 updated (38 bytes)
+
+helios> run 14
+> status
+Helios v0.1.0 | Hart 0 | Uptime: 45.2s
+...
+> gql type=system
+  #1   system   root
+  ...
+> ps
+  ...
+Script #14: 3 commands executed
+```
+
 ## screenshots
 
 **boot splash (M2)**
@@ -133,9 +160,13 @@ helios> nav       # interactive graph navigator (arrow keys, enter, d for detail
 
 ![tree](screenshots/m12-tree.png)
 
-**graph with tasks running (M11+M12)**
+**framebuffer console (M18)**
 
-![tasks](screenshots/m12-with-tasks.png)
+![console](screenshots/m18-console.png)
+
+**interactive graph navigator with keyboard input (M15+M19)**
+
+![navigator](screenshots/m19-navigator-keyboard.png)
 
 ## architecture
 
@@ -163,7 +194,7 @@ src/
     live.rs            live system node refresh
     init.rs            graph bootstrap
   task/                preemptive + cooperative multitasking
-  virtio/              VirtIO MMIO transport, block device driver
+  virtio/              VirtIO MMIO transport, block device, keyboard input
 ```
 
 ## the idea
@@ -201,6 +232,8 @@ the graph is the filesystem, the process table, the device tree, and the IPC mec
 | M16 | graph query language | `3eab242` |
 | M17 | graph-based IPC | `d8d86c0` |
 | M18 | framebuffer text console | `60ec256` |
+| M19 | VirtIO keyboard input | `30383d2` |
+| M20 | shell scripting | `f68c37f` |
 
 ## license
 
