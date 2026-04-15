@@ -49,6 +49,37 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
     // Initialize the graph store
     graph::init();
 
+    // Initialize block device and try to load saved graph
+    if virtio::blk::init() {
+        // Try to load saved graph from disk
+        if let Some(blk) = virtio::blk::get_mut() {
+            let mut header_sector = [0u8; 512];
+            if blk.read_sector(0, &mut header_sector) {
+                let data_len = u64::from_le_bytes([
+                    header_sector[0], header_sector[1], header_sector[2], header_sector[3],
+                    header_sector[4], header_sector[5], header_sector[6], header_sector[7],
+                ]) as usize;
+                if data_len > 0 && data_len < 16 * 1024 * 1024 {
+                    let total_len = 8 + data_len;
+                    let sectors = (total_len + 511) / 512;
+                    let mut payload = alloc::vec![0u8; sectors * 512];
+                    if blk.read(0, &mut payload) {
+                        let data = &payload[8..8 + data_len];
+                        if let Some(loaded_graph) = graph::persist::deserialize(data) {
+                            let nodes = loaded_graph.node_count();
+                            let edges = loaded_graph.edge_count();
+                            graph::replace(loaded_graph);
+                            println!(
+                                "[graph] Loaded saved graph from disk: {} nodes, {} edges",
+                                nodes, edges
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Initialize framebuffer (ramfb via fw_cfg)
     framebuffer::init();
 

@@ -3,6 +3,7 @@
 
 pub mod init;
 pub mod live;
+pub mod persist;
 pub mod render;
 
 use alloc::collections::BTreeMap;
@@ -161,6 +162,14 @@ pub fn get() -> &'static Graph {
 #[allow(static_mut_refs)]
 pub fn get_mut() -> &'static mut Graph {
     unsafe { GRAPH.as_mut().expect("graph not initialized") }
+}
+
+/// Replace the global graph with a new one (used by load).
+#[allow(static_mut_refs)]
+pub fn replace(graph: Graph) {
+    unsafe {
+        GRAPH = Some(graph);
+    }
 }
 
 /// Initialize the global graph and bootstrap initial nodes.

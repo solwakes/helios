@@ -1,5 +1,6 @@
 /// VirtIO common types and virtqueue implementation.
 
+pub mod blk;
 pub mod gpu;
 pub mod mmio;
 

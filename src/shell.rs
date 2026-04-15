@@ -89,6 +89,9 @@ fn execute(line: &str) {
         "rm" => cmd_rm(arg1),
         "render" => cmd_render(),
         "status" => cmd_status(),
+        "save" => cmd_save(),
+        "load" => cmd_load(),
+        "disk" => cmd_disk(),
         _ => {
             crate::println!("Unknown command: {}", cmd);
             crate::println!("Type 'help' for available commands.");
@@ -120,6 +123,10 @@ fn cmd_help() {
     crate::println!("  rm <id>       - remove a node");
     crate::println!("  render        - re-render graph on framebuffer");
     crate::println!("  status        - live system overview");
+    crate::println!("Disk commands:");
+    crate::println!("  save          - save graph to disk");
+    crate::println!("  load          - load graph from disk");
+    crate::println!("  disk          - show disk info");
 }
 
 fn cmd_info() {
@@ -524,6 +531,126 @@ fn cmd_render() {
         crate::println!("Graph rendered to framebuffer.");
     } else {
         crate::println!("No framebuffer available (UART-only mode).");
+    }
+}
+
+fn cmd_save() {
+    let blk = match crate::virtio::blk::get_mut() {
+        Some(b) => b,
+        None => {
+            crate::println!("No disk device available.");
+            return;
+        }
+    };
+
+    let g = crate::graph::get();
+    let data = crate::graph::persist::serialize(g);
+    let data_len = data.len();
+
+    // Prepend length as u64 (8 bytes), then the serialized data
+    let total_len = 8 + data_len;
+    let sectors = (total_len + 511) / 512;
+
+    let mut payload = alloc::vec![0u8; sectors * 512];
+    // Write length
+    payload[0..8].copy_from_slice(&(data_len as u64).to_le_bytes());
+    // Write data
+    payload[8..8 + data_len].copy_from_slice(&data);
+
+    if blk.write(0, &payload) {
+        crate::println!(
+            "Graph saved to disk ({} bytes, {} sector{})",
+            data_len,
+            sectors,
+            if sectors == 1 { "" } else { "s" }
+        );
+    } else {
+        crate::println!("Failed to write graph to disk!");
+    }
+}
+
+fn cmd_load() {
+    let blk = match crate::virtio::blk::get_mut() {
+        Some(b) => b,
+        None => {
+            crate::println!("No disk device available.");
+            return;
+        }
+    };
+
+    // Read first sector to get the length
+    let mut header_sector = [0u8; 512];
+    if !blk.read_sector(0, &mut header_sector) {
+        crate::println!("Failed to read disk!");
+        return;
+    }
+
+    let data_len = u64::from_le_bytes([
+        header_sector[0], header_sector[1], header_sector[2], header_sector[3],
+        header_sector[4], header_sector[5], header_sector[6], header_sector[7],
+    ]) as usize;
+
+    if data_len == 0 || data_len > 16 * 1024 * 1024 {
+        crate::println!("No valid graph data on disk.");
+        return;
+    }
+
+    // Read all needed sectors
+    let total_len = 8 + data_len;
+    let sectors = (total_len + 511) / 512;
+    let mut payload = alloc::vec![0u8; sectors * 512];
+
+    if !blk.read(0, &mut payload) {
+        crate::println!("Failed to read graph data from disk!");
+        return;
+    }
+
+    let data = &payload[8..8 + data_len];
+    match crate::graph::persist::deserialize(data) {
+        Some(graph) => {
+            let nodes = graph.node_count();
+            let edges = graph.edge_count();
+            crate::graph::replace(graph);
+            crate::println!(
+                "Graph loaded from disk ({} bytes, {} nodes, {} edges)",
+                data_len, nodes, edges
+            );
+        }
+        None => {
+            crate::println!("Failed to deserialize graph data!");
+        }
+    }
+}
+
+fn cmd_disk() {
+    if !crate::virtio::blk::is_present() {
+        crate::println!("Disk: not present");
+        return;
+    }
+
+    crate::println!("Disk: present (virtio-blk)");
+
+    // Try to read sector 0 to see if there's saved data
+    let blk = match crate::virtio::blk::get_mut() {
+        Some(b) => b,
+        None => return,
+    };
+
+    let mut header_sector = [0u8; 512];
+    if blk.read_sector(0, &mut header_sector) {
+        let data_len = u64::from_le_bytes([
+            header_sector[0], header_sector[1], header_sector[2], header_sector[3],
+            header_sector[4], header_sector[5], header_sector[6], header_sector[7],
+        ]) as usize;
+
+        if data_len > 0 && data_len < 16 * 1024 * 1024 {
+            let sectors = (8 + data_len + 511) / 512;
+            crate::println!("Saved data: {} bytes ({} sectors)", data_len, sectors);
+        } else {
+            crate::println!("No saved data on disk.");
+        }
+    } else {
+        crate::println!("Could not read disk.");
     }
 }
 
