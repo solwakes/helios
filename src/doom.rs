@@ -385,6 +385,7 @@ pub fn start() {
         // We got here via longjmp from exit() — DOOM has quit
         crate::println!("[doom] DOOM exited with code {}", exit_code);
         unsafe { DOOM_MODE = false; }
+        crate::graph::live::refresh_system_nodes();
         crate::framebuffer::render_graph();
         crate::println!("[doom] Returned to Helios.");
         return;

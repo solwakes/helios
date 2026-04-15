@@ -378,6 +378,12 @@ pub fn render(fb: &Framebuffer, graph: &Graph) {
     let sep_x = (fb.width.saturating_sub(sep_w)) / 2;
     fb.draw_hline(sep_x, sep_y, sep_w, SEP_C);
 
+    // Hint bar below title
+    let hint = "type \"nav\" for interactive | type \"tty\" for terminal";
+    let hint_w = hint.len() as u32 * CHAR_W_S;
+    let hint_x = (fb.width.saturating_sub(hint_w)) / 2;
+    draw_string(fb, hint, hint_x, sep_y + 4, SCALE_S, SUMMARY_C);
+
     // 3. Build tree from root (node #1)
     let mut visited = Vec::new();
     let mut label_pool: Vec<u8> = Vec::new();
