@@ -34,39 +34,101 @@ unsafe impl Send for Framebuffer {}
 unsafe impl Sync for Framebuffer {}
 
 impl Framebuffer {
-    /// Fill the entire framebuffer with a solid color
+    /// Pack a pixel into a u32 in BGRA byte order.
+    #[inline(always)]
+    fn pack_pixel(pixel: Pixel) -> u32 {
+        (pixel.b as u32) | ((pixel.g as u32) << 8) | ((pixel.r as u32) << 16) | ((pixel.a as u32) << 24)
+    }
+
+    /// Fill the entire framebuffer with a solid color (optimized: u64 writes)
     pub fn fill(&self, pixel: Pixel) {
         if self.base.is_null() {
             return;
         }
-        for y in 0..self.height {
-            for x in 0..self.width {
-                self.put_pixel(x, y, pixel);
+        let word = Self::pack_pixel(pixel);
+        let dword: u64 = (word as u64) | ((word as u64) << 32);
+        // If stride == width * bpp, we can blast the whole buffer
+        if self.stride == self.width * self.bpp {
+            let total_pixels = (self.width * self.height) as usize;
+            let total_u64s = total_pixels / 2;
+            unsafe {
+                let ptr = self.base as *mut u64;
+                for i in 0..total_u64s {
+                    ptr.add(i).write_volatile(dword);
+                }
+                // Handle odd pixel if any
+                if total_pixels & 1 != 0 {
+                    let last = (self.base as *mut u32).add(total_pixels - 1);
+                    last.write_volatile(word);
+                }
+            }
+        } else {
+            // Stride != width*bpp — fill row by row
+            for y in 0..self.height {
+                let row_offset = (y * self.stride) as usize;
+                let pairs = (self.width / 2) as usize;
+                unsafe {
+                    let row_ptr = self.base.add(row_offset) as *mut u64;
+                    for i in 0..pairs {
+                        row_ptr.add(i).write_volatile(dword);
+                    }
+                    if self.width & 1 != 0 {
+                        let last = (self.base.add(row_offset) as *mut u32).add(self.width as usize - 1);
+                        last.write_volatile(word);
+                    }
+                }
             }
         }
     }
 
     /// Set a single pixel
+    #[inline(always)]
     pub fn put_pixel(&self, x: u32, y: u32, pixel: Pixel) {
-        if self.base.is_null() || x >= self.width || y >= self.height {
+        if x >= self.width || y >= self.height {
             return;
         }
         let offset = (y * self.stride + x * self.bpp) as usize;
         unsafe {
-            let ptr = self.base.add(offset);
-            // BGRA / XRGB format (common for virtio-gpu / ramfb)
-            ptr.add(0).write_volatile(pixel.b);
-            ptr.add(1).write_volatile(pixel.g);
-            ptr.add(2).write_volatile(pixel.r);
-            ptr.add(3).write_volatile(pixel.a);
+            let ptr = self.base.add(offset) as *mut u32;
+            ptr.write_volatile(Self::pack_pixel(pixel));
         }
     }
 
-    /// Draw a filled rectangle
+    /// Write a pixel without bounds checking (caller must ensure validity)
+    #[inline(always)]
+    unsafe fn put_pixel_unchecked(&self, x: u32, y: u32, pixel_word: u32) {
+        let offset = (y * self.stride + x * self.bpp) as usize;
+        let ptr = self.base.add(offset) as *mut u32;
+        ptr.write_volatile(pixel_word);
+    }
+
+    /// Draw a filled rectangle (optimized: row-based u64 writes)
     pub fn fill_rect(&self, x: u32, y: u32, w: u32, h: u32, pixel: Pixel) {
-        for dy in 0..h {
-            for dx in 0..w {
-                self.put_pixel(x + dx, y + dy, pixel);
+        if w == 0 || h == 0 {
+            return;
+        }
+        let word = Self::pack_pixel(pixel);
+        let dword: u64 = (word as u64) | ((word as u64) << 32);
+        // Clamp to framebuffer bounds
+        let x_end = (x + w).min(self.width);
+        let y_end = (y + h).min(self.height);
+        if x >= self.width || y >= self.height {
+            return;
+        }
+        let actual_w = x_end - x;
+        let pairs = (actual_w / 2) as usize;
+        let odd = actual_w & 1 != 0;
+        for row in y..y_end {
+            let row_offset = (row * self.stride + x * self.bpp) as usize;
+            unsafe {
+                let ptr = self.base.add(row_offset) as *mut u64;
+                for i in 0..pairs {
+                    ptr.add(i).write_volatile(dword);
+                }
+                if odd {
+                    let last = (self.base.add(row_offset) as *mut u32).add(actual_w as usize - 1);
+                    last.write_volatile(word);
+                }
             }
         }
     }
@@ -90,9 +152,8 @@ impl Framebuffer {
 
     /// Draw a horizontal line
     pub fn draw_hline(&self, x: u32, y: u32, len: u32, pixel: Pixel) {
-        for dx in 0..len {
-            self.put_pixel(x + dx, y, pixel);
-        }
+        // Use fill_rect for optimized row writes
+        self.fill_rect(x, y, len, 1, pixel);
     }
 
     /// Draw a vertical line
@@ -346,10 +407,32 @@ fn glyph(ch: u8) -> [u8; 8] {
 /// Draw a character at (x, y) with a given scale factor
 pub fn draw_char(fb: &Framebuffer, ch: u8, x: u32, y: u32, scale: u32, color: Pixel) {
     let g = glyph(ch);
+    let word = Framebuffer::pack_pixel(color);
     for row in 0..8u32 {
+        let bits = g[row as usize];
+        if bits == 0 { continue; }
         for col in 0..8u32 {
-            if g[row as usize] & (0x80 >> col) != 0 {
-                fb.fill_rect(x + col * scale, y + row * scale, scale, scale, color);
+            if bits & (0x80 >> col) != 0 {
+                let px = x + col * scale;
+                let py = y + row * scale;
+                if scale == 1 {
+                    if px < fb.width && py < fb.height {
+                        unsafe { fb.put_pixel_unchecked(px, py, word); }
+                    }
+                } else if scale == 2 {
+                    // Inline 2x2 block write
+                    if px + 1 < fb.width && py + 1 < fb.height {
+                        unsafe {
+                            let dword: u64 = (word as u64) | ((word as u64) << 32);
+                            let off0 = (py * fb.stride + px * fb.bpp) as usize;
+                            let off1 = ((py + 1) * fb.stride + px * fb.bpp) as usize;
+                            (fb.base.add(off0) as *mut u64).write_volatile(dword);
+                            (fb.base.add(off1) as *mut u64).write_volatile(dword);
+                        }
+                    }
+                } else {
+                    fb.fill_rect(px, py, scale, scale, color);
+                }
             }
         }
     }
@@ -412,9 +495,7 @@ pub fn init() {
 /// Re-render the graph on the framebuffer. Called from init and from shell.
 pub fn render_graph() {
     if let Some(fb) = get() {
-        let prev = crate::arch::riscv64::interrupts_disable();
         let graph = crate::graph::get();
         crate::graph::render::render(fb, graph);
-        crate::arch::riscv64::interrupts_restore(prev);
     }
 }

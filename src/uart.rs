@@ -120,6 +120,17 @@ macro_rules! println {
     };
 }
 
+/// println with millisecond timestamp prefix
+#[macro_export]
+macro_rules! tprintln {
+    ($($arg:tt)*) => {
+        {
+            let _ms = $crate::arch::riscv64::read_time() / 10_000;
+            $crate::print!("[{:>8}ms] {}\n", _ms, format_args!($($arg)*))
+        }
+    };
+}
+
 use core::fmt::{self, Write};
 
 struct UartWriter;

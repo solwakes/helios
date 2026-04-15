@@ -180,8 +180,6 @@ fn render() {
         None => return,
     };
 
-    let prev = crate::arch::riscv64::interrupts_disable();
-
     // 1. Clear entire framebuffer
     fb.fill(BG);
 
@@ -206,5 +204,4 @@ fn render() {
         }
     }
 
-    crate::arch::riscv64::interrupts_restore(prev);
 }

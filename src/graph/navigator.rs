@@ -224,10 +224,8 @@ pub fn init() {
 /// Re-render the navigator view on the framebuffer.
 pub fn render_nav() {
     if let Some(fb) = crate::framebuffer::get() {
-        let prev = crate::arch::riscv64::interrupts_disable();
         let graph = crate::graph::get();
         let nav = get();
         super::render::render_navigated(fb, graph, nav);
-        crate::arch::riscv64::interrupts_restore(prev);
     }
 }

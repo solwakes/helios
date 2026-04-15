@@ -295,7 +295,7 @@ fn draw_node_box_ex(fb: &Framebuffer, graph: &Graph, pn: &Positioned, selected: 
     let node = match graph.get_node(pn.node_id) {
         Some(n) => n,
         None => {
-            crate::println!("[render] node #{} not found in graph!", pn.node_id);
+            crate::tprintln!("[render] node #{} not found in graph!", pn.node_id);
             return;
         }
     };
@@ -305,18 +305,18 @@ fn draw_node_box_ex(fb: &Framebuffer, graph: &Graph, pn: &Positioned, selected: 
 
     // Off-screen check
     if left + pn.w as i32 <= 0 || left >= fb.width as i32 {
-        crate::println!("[render] node #{} '{}' off-screen X: left={}, w={}, fb_w={}", pn.node_id, node.name, left, pn.w, fb.width);
+        crate::tprintln!("[render] node #{} '{}' off-screen X: left={}, w={}, fb_w={}", pn.node_id, node.name, left, pn.w, fb.width);
         return;
     }
     if top + NODE_H as i32 <= 0 || top >= fb.height as i32 {
-        crate::println!("[render] node #{} '{}' off-screen Y: top={}, fb_h={}", pn.node_id, node.name, top, fb.height);
+        crate::tprintln!("[render] node #{} '{}' off-screen Y: top={}, fb_h={}", pn.node_id, node.name, top, fb.height);
         return;
     }
 
     let ux = left.max(0) as u32;
     let uy = top.max(0) as u32;
 
-    crate::println!("[render] node #{} '{}': left={}, top={}, ux={}, uy={}, w={}, sel={}", pn.node_id, node.name, left, top, ux, uy, pn.w, selected);
+    crate::tprintln!("[render] node #{} '{}': left={}, top={}, ux={}, uy={}, w={}, sel={}", pn.node_id, node.name, left, top, ux, uy, pn.w, selected);
 
     // Fill background
     fb.fill_rect(ux, uy, pn.w, NODE_H, CARD_BG);
@@ -448,8 +448,13 @@ const DETAIL_LINE_H: u32 = 14; // line spacing for small text
 
 /// Render the graph with navigator state: highlights, collapse indicators, detail panel.
 pub fn render_navigated(fb: &Framebuffer, graph: &Graph, nav: &NavigatorState) {
+    let t0 = crate::arch::riscv64::read_time();
+
     // 1. Clear background
     fb.fill(BG);
+
+    let t1 = crate::arch::riscv64::read_time();
+    crate::tprintln!("[render] fill took {}ms", (t1 - t0) / 10_000);
 
     // 2. Title bar
     let title = "HELIOS - Graph Navigator";
@@ -517,6 +522,9 @@ pub fn render_navigated(fb: &Framebuffer, graph: &Graph, nav: &NavigatorState) {
     let summary = format!("{} nodes | selected: #{}", graph.node_count(), nav.selected_node);
     let summary_y = fb.height - MARGIN - CHAR_H;
     draw_string(fb, &summary, MARGIN, summary_y, SCALE, SUMMARY_C);
+
+    let t_end = crate::arch::riscv64::read_time();
+    crate::tprintln!("[render] total render took {}ms", (t_end - t0) / 10_000);
 }
 
 /// Draw the detail panel on the right side for the given node.
