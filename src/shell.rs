@@ -166,6 +166,68 @@ fn handle_nav_input(input: NavInput) {
     }
 }
 
+/// Process tablet (mouse) events — cursor movement and clicks.
+/// Called from the main loop after polling the tablet device.
+pub fn process_tablet_events() {
+    use crate::virtio::tablet;
+
+    let cur = tablet::cursor();
+    let moved = cur.moved;
+    let clicked = cur.left_clicked;
+
+    if !moved && !clicked {
+        return;
+    }
+
+    let cx = cur.x;
+    let cy = cur.y;
+
+    // Clear the event flags
+    if moved { tablet::clear_moved(); }
+    if clicked { tablet::clear_click(); }
+
+    unsafe {
+        if NAV_MODE {
+            // In navigator mode: handle mouse hover and click
+            let mut need_render = false;
+
+            // Hit test against last layout
+            if let Some(hit_id) = crate::graph::render::hit_test(cx, cy) {
+                let nav = navigator::get_mut();
+
+                if clicked {
+                    // Click on a node: select it and toggle collapse
+                    nav.selected_node = hit_id;
+                    // Toggle collapse (same as Enter)
+                    match nav.handle_input(NavInput::ToggleCollapse) {
+                        None => {
+                            exit_nav_mode();
+                            return;
+                        }
+                        _ => {}
+                    }
+                    need_render = true;
+                } else if moved && nav.selected_node != hit_id {
+                    // Hover: highlight the node under cursor
+                    nav.selected_node = hit_id;
+                    need_render = true;
+                }
+            }
+
+            if need_render {
+                crate::graph::live::refresh_system_nodes();
+                navigator::render_nav();
+            } else if moved {
+                // Just redraw cursor at new position
+                if let Some(fb) = crate::framebuffer::get() {
+                    crate::framebuffer::undraw_cursor(fb);
+                    crate::framebuffer::draw_cursor(fb, cx, cy);
+                }
+            }
+        }
+    }
+}
+
 /// Process a byte in edit mode — accumulate lines into EDIT_BUFFER.
 fn process_edit_byte(byte: u8) {
     unsafe {

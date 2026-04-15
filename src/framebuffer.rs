@@ -499,3 +499,114 @@ pub fn render_graph() {
         crate::graph::render::render(fb, graph);
     }
 }
+
+// =============================================================================
+// Cursor rendering — arrow pointer sprite with save/restore
+// =============================================================================
+
+/// Cursor sprite dimensions
+const CURSOR_W: u32 = 10;
+const CURSOR_H: u32 = 16;
+
+/// Arrow pointer sprite: 1=white, 2=black outline, 0=transparent
+/// Classic arrow cursor shape
+static CURSOR_SPRITE: [[u8; 10]; 16] = [
+    [2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [2, 2, 0, 0, 0, 0, 0, 0, 0, 0],
+    [2, 1, 2, 0, 0, 0, 0, 0, 0, 0],
+    [2, 1, 1, 2, 0, 0, 0, 0, 0, 0],
+    [2, 1, 1, 1, 2, 0, 0, 0, 0, 0],
+    [2, 1, 1, 1, 1, 2, 0, 0, 0, 0],
+    [2, 1, 1, 1, 1, 1, 2, 0, 0, 0],
+    [2, 1, 1, 1, 1, 1, 1, 2, 0, 0],
+    [2, 1, 1, 1, 1, 1, 1, 1, 2, 0],
+    [2, 1, 1, 1, 1, 1, 1, 1, 1, 2],
+    [2, 1, 1, 1, 1, 1, 2, 2, 2, 2],
+    [2, 1, 1, 2, 1, 1, 2, 0, 0, 0],
+    [2, 1, 2, 0, 2, 1, 1, 2, 0, 0],
+    [2, 2, 0, 0, 2, 1, 1, 2, 0, 0],
+    [2, 0, 0, 0, 0, 2, 1, 1, 2, 0],
+    [0, 0, 0, 0, 0, 2, 2, 2, 0, 0],
+];
+
+/// Saved pixels under the cursor (max CURSOR_W * CURSOR_H pixels as u32 packed values)
+static mut CURSOR_SAVE: [u32; (CURSOR_W * CURSOR_H) as usize] = [0u32; (CURSOR_W * CURSOR_H) as usize];
+/// Whether the cursor is currently drawn on the framebuffer
+static mut CURSOR_DRAWN: bool = false;
+/// Position where the cursor was last drawn
+static mut CURSOR_DRAWN_X: u32 = 0;
+static mut CURSOR_DRAWN_Y: u32 = 0;
+
+/// Save the pixels under the cursor area, then draw the cursor sprite.
+pub fn draw_cursor(fb: &Framebuffer, x: u32, y: u32) {
+    unsafe {
+        // Save pixels under cursor
+        for row in 0..CURSOR_H {
+            for col in 0..CURSOR_W {
+                let px = x + col;
+                let py = y + row;
+                let idx = (row * CURSOR_W + col) as usize;
+                if px < fb.width && py < fb.height {
+                    let offset = (py * fb.stride + px * fb.bpp) as usize;
+                    let ptr = fb.base.add(offset) as *const u32;
+                    CURSOR_SAVE[idx] = ptr.read_volatile();
+                } else {
+                    CURSOR_SAVE[idx] = 0;
+                }
+            }
+        }
+
+        // Draw cursor sprite
+        let white = Framebuffer::pack_pixel(Pixel::new(0xff, 0xff, 0xff));
+        let black = Framebuffer::pack_pixel(Pixel::new(0x00, 0x00, 0x00));
+
+        for row in 0..CURSOR_H {
+            for col in 0..CURSOR_W {
+                let s = CURSOR_SPRITE[row as usize][col as usize];
+                if s == 0 { continue; }
+                let px = x + col;
+                let py = y + row;
+                if px < fb.width && py < fb.height {
+                    let word = if s == 1 { white } else { black };
+                    fb.put_pixel_unchecked(px, py, word);
+                }
+            }
+        }
+
+        CURSOR_DRAWN = true;
+        CURSOR_DRAWN_X = x;
+        CURSOR_DRAWN_Y = y;
+    }
+}
+
+/// Restore the pixels that were saved before the cursor was drawn.
+pub fn undraw_cursor(fb: &Framebuffer) {
+    unsafe {
+        if !CURSOR_DRAWN {
+            return;
+        }
+
+        let x = CURSOR_DRAWN_X;
+        let y = CURSOR_DRAWN_Y;
+
+        for row in 0..CURSOR_H {
+            for col in 0..CURSOR_W {
+                let px = x + col;
+                let py = y + row;
+                if px < fb.width && py < fb.height {
+                    let idx = (row * CURSOR_W + col) as usize;
+                    let offset = (py * fb.stride + px * fb.bpp) as usize;
+                    let ptr = fb.base.add(offset) as *mut u32;
+                    ptr.write_volatile(CURSOR_SAVE[idx]);
+                }
+            }
+        }
+
+        CURSOR_DRAWN = false;
+    }
+}
+
+/// Returns true if the cursor is currently drawn on the framebuffer.
+pub fn is_cursor_drawn() -> bool {
+    unsafe { CURSOR_DRAWN }
+}

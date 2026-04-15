@@ -82,11 +82,12 @@ struct TreeNode {
     edge_labels: Vec<usize>, // index into a label pool (parallel to children)
 }
 
-struct Positioned {
-    node_id: u64,
-    cx: i32,  // center-x
-    y: i32,   // top-y
-    w: u32,   // box width
+/// A positioned node box from layout — used for hit testing.
+pub struct Positioned {
+    pub node_id: u64,
+    pub cx: i32,  // center-x
+    pub y: i32,   // top-y
+    pub w: u32,   // box width
 }
 
 struct Edge {
@@ -523,6 +524,13 @@ pub fn render_navigated(fb: &Framebuffer, graph: &Graph, nav: &NavigatorState) {
     let summary_y = fb.height - MARGIN - CHAR_H;
     draw_string(fb, &summary, MARGIN, summary_y, SCALE, SUMMARY_C);
 
+    // 10. Store layout positions for mouse hit testing
+    save_layout(&nodes);
+
+    // 11. Draw cursor overlay if tablet is active
+    let cur = crate::virtio::tablet::cursor();
+    crate::framebuffer::draw_cursor(fb, cur.x, cur.y);
+
     let t_end = crate::arch::riscv64::read_time();
     crate::tprintln!("[render] total render took {}ms", (t_end - t0) / 10_000);
 }
@@ -663,4 +671,50 @@ fn draw_detail_line(fb: &Framebuffer, x: u32, y: u32, text: &str, max_chars: usi
         let display = format!("{}..", truncated);
         draw_string(fb, &display, x, y, SCALE_S, DETAIL_VALUE_C);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Layout storage for mouse hit testing
+// ---------------------------------------------------------------------------
+
+/// Stored node bounding box for hit testing.
+struct HitBox {
+    node_id: u64,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+static mut LAST_LAYOUT: Option<Vec<HitBox>> = None;
+
+/// Save the current layout positions for later hit testing.
+fn save_layout(nodes: &[Positioned]) {
+    let mut boxes = Vec::with_capacity(nodes.len());
+    for pn in nodes {
+        let left = pn.cx - pn.w as i32 / 2;
+        boxes.push(HitBox {
+            node_id: pn.node_id,
+            left,
+            top: pn.y,
+            right: left + pn.w as i32,
+            bottom: pn.y + NODE_H as i32,
+        });
+    }
+    unsafe { LAST_LAYOUT = Some(boxes); }
+}
+
+/// Hit test: given a pixel coordinate (x, y), return the node_id of the node
+/// whose bounding box contains the point, if any.
+#[allow(static_mut_refs)]
+pub fn hit_test(x: u32, y: u32) -> Option<u64> {
+    let boxes = unsafe { LAST_LAYOUT.as_ref()? };
+    let ix = x as i32;
+    let iy = y as i32;
+    for hb in boxes {
+        if ix >= hb.left && ix < hb.right && iy >= hb.top && iy < hb.bottom {
+            return Some(hb.node_id);
+        }
+    }
+    None
 }

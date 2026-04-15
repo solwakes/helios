@@ -67,6 +67,12 @@ impl VirtioMmio {
 
     /// Probe all MMIO slots for a device with the given ID.
     pub fn probe(device_id: u32) -> Option<Self> {
+        Self::probe_nth(device_id, 0)
+    }
+
+    /// Probe all MMIO slots for the Nth device (0-based) with the given ID.
+    pub fn probe_nth(device_id: u32, n: usize) -> Option<Self> {
+        let mut found = 0usize;
         for i in 0..VIRTIO_MMIO_COUNT {
             let base = VIRTIO_MMIO_BASE + i * VIRTIO_MMIO_STRIDE;
             let magic = unsafe { ptr::read_volatile(base as *const u32) };
@@ -83,6 +89,30 @@ impl VirtioMmio {
                 version,
                 dev_id
             );
+
+            if dev_id == device_id {
+                if found == n {
+                    return Some(VirtioMmio { base, version });
+                }
+                found += 1;
+            }
+        }
+        None
+    }
+
+    /// Probe all MMIO slots for a device with the given ID, skipping the given base address.
+    pub fn probe_skip(device_id: u32, skip_base: usize) -> Option<Self> {
+        for i in 0..VIRTIO_MMIO_COUNT {
+            let base = VIRTIO_MMIO_BASE + i * VIRTIO_MMIO_STRIDE;
+            if base == skip_base {
+                continue;
+            }
+            let magic = unsafe { ptr::read_volatile(base as *const u32) };
+            if magic != VIRTIO_MAGIC {
+                continue;
+            }
+            let version = unsafe { ptr::read_volatile((base + VERSION) as *const u32) };
+            let dev_id = unsafe { ptr::read_volatile((base + DEVICE_ID) as *const u32) };
 
             if dev_id == device_id {
                 return Some(VirtioMmio { base, version });
@@ -250,6 +280,16 @@ impl VirtioMmio {
         if s != 0 {
             self.write32(INTERRUPT_ACK, s);
         }
+    }
+
+    /// Read a byte from the device-specific config space (offset 0x100+).
+    pub fn read_config_u8(&self, offset: usize) -> u8 {
+        unsafe { ptr::read_volatile((self.base + 0x100 + offset) as *const u8) }
+    }
+
+    /// Write a byte to the device-specific config space (offset 0x100+).
+    pub fn write_config_u8(&self, offset: usize, val: u8) {
+        unsafe { ptr::write_volatile((self.base + 0x100 + offset) as *mut u8, val) }
     }
 }
 

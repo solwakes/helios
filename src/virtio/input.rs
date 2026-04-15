@@ -50,6 +50,11 @@ pub fn init() -> bool {
     }
 }
 
+/// Get the MMIO base address of the keyboard device (so the tablet driver can skip it).
+pub fn keyboard_base() -> Option<usize> {
+    unsafe { INPUT_DEV.as_ref().map(|d| d.mmio.base) }
+}
+
 /// Poll the input device and feed bytes to the shell.
 /// Returns the number of key events processed.
 #[allow(static_mut_refs)]
@@ -63,15 +68,23 @@ pub fn poll() -> usize {
 
 impl VirtioInput {
     /// Probe, initialize, and set up the input device.
+    /// Finds the first input device (ID 18) that is NOT the already-claimed tablet device.
     pub fn init() -> Option<Self> {
-        let mmio = VirtioMmio::probe(18)?; // device ID 18 = input
+        // Skip the tablet device if already initialized
+        let tablet_base = super::tablet::tablet_base().unwrap_or(0);
+        let mmio = if tablet_base != 0 {
+            VirtioMmio::probe_skip(18, tablet_base)?
+        } else {
+            VirtioMmio::probe(18)?
+        };
         crate::println!(
-            "[input] Found input device @ {:#x} (version {})",
-            mmio.base,
-            mmio.version
+            "[input] Found keyboard device @ {:#x} (version {})",
+            mmio.base, mmio.version
         );
 
         mmio.init_device();
+
+        // Device already initialized above
 
         // Set up event queue (virtq 0)
         let (dp, ap, up, qs) = mmio.setup_queue(0)?;

@@ -86,6 +86,10 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
         }
     }
 
+    // Initialize VirtIO tablet (mouse) input — must be before keyboard
+    // so the tablet gets the first init on its device without interference
+    virtio::tablet::init();
+
     // Initialize VirtIO keyboard input
     virtio::input::init();
 
@@ -122,6 +126,12 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
 
         // Poll VirtIO keyboard for input events
         virtio::input::poll();
+
+        // Poll VirtIO tablet for mouse events
+        virtio::tablet::poll();
+
+        // Process tablet events (cursor movement and clicks in nav mode)
+        shell::process_tablet_events();
 
         // Yield to let other tasks run
         task::yield_now();
