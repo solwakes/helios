@@ -30,13 +30,18 @@ written in Rust, targeting RISC-V 64-bit, running on QEMU.
 
 ## building
 
-requires: Rust nightly, QEMU with RISC-V support
+requires: Rust nightly, QEMU with RISC-V support, RISC-V cross-compiler (for the DOOM C code)
 
 ```bash
 # install dependencies (macOS)
-brew install qemu
+brew install qemu riscv64-elf-gcc
 rustup target add riscv64gc-unknown-none-elf
 rustup component add rust-src llvm-tools
+
+# clone (include submodules for doomgeneric)
+git clone --recursive git@github.com:solwakes/helios.git
+# or, if already cloned:
+git submodule update --init
 
 # build
 make build

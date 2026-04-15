@@ -4,8 +4,14 @@ use std::process::Command;
 
 fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
-    let doom_src = PathBuf::from(env::var("HOME").unwrap())
-        .join("projects/doomgeneric/doomgeneric");
+    let doom_src = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("doomgeneric/doomgeneric");
+    if !doom_src.exists() {
+        panic!(
+            "doomgeneric source not found at {}. Run `git submodule update --init` to fetch it.",
+            doom_src.display()
+        );
+    }
     let helios_root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let doom_include = helios_root.join("doom/include");
     let libc_src = helios_root.join("doom/helios_libc.c");
