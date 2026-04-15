@@ -127,6 +127,14 @@ pub fn process_byte(byte: u8) {
 
 /// Process a byte in navigator mode.
 fn process_nav_byte(byte: u8) {
+    // 't' switches directly to the framebuffer text console
+    if byte == b't' {
+        unsafe { NAV_MODE = false; }
+        crate::console::set_active(true);
+        crate::println!("Framebuffer console active. Type 'render' for graph view.");
+        crate::print!("{}", PROMPT);
+        return;
+    }
     let input = match byte {
         b'q' => Some(NavInput::Quit),
         b'\r' | b'\n' | b' ' => Some(NavInput::ToggleCollapse),
