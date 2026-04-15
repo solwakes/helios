@@ -295,29 +295,18 @@ fn draw_node_box(fb: &Framebuffer, graph: &Graph, pn: &Positioned) {
 fn draw_node_box_ex(fb: &Framebuffer, graph: &Graph, pn: &Positioned, selected: bool, is_collapsed: bool) {
     let node = match graph.get_node(pn.node_id) {
         Some(n) => n,
-        None => {
-            crate::tprintln!("[render] node #{} not found in graph!", pn.node_id);
-            return;
-        }
+        None => return,
     };
 
     let left = pn.cx - pn.w as i32 / 2;
     let top = pn.y;
 
     // Off-screen check
-    if left + pn.w as i32 <= 0 || left >= fb.width as i32 {
-        crate::tprintln!("[render] node #{} '{}' off-screen X: left={}, w={}, fb_w={}", pn.node_id, node.name, left, pn.w, fb.width);
-        return;
-    }
-    if top + NODE_H as i32 <= 0 || top >= fb.height as i32 {
-        crate::tprintln!("[render] node #{} '{}' off-screen Y: top={}, fb_h={}", pn.node_id, node.name, top, fb.height);
-        return;
-    }
+    if left + pn.w as i32 <= 0 || left >= fb.width as i32 { return; }
+    if top + NODE_H as i32 <= 0 || top >= fb.height as i32 { return; }
 
     let ux = left.max(0) as u32;
     let uy = top.max(0) as u32;
-
-    crate::tprintln!("[render] node #{} '{}': left={}, top={}, ux={}, uy={}, w={}, sel={}", pn.node_id, node.name, left, top, ux, uy, pn.w, selected);
 
     // Fill background
     fb.fill_rect(ux, uy, pn.w, NODE_H, CARD_BG);
