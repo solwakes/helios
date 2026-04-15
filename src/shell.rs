@@ -92,6 +92,10 @@ fn execute(line: &str) {
         "save" => cmd_save(),
         "load" => cmd_load(),
         "disk" => cmd_disk(),
+        // Task commands
+        "ps" => cmd_ps(),
+        "spawn" => cmd_spawn(arg1),
+        "kill" => cmd_kill(arg1),
         _ => {
             crate::println!("Unknown command: {}", cmd);
             crate::println!("Type 'help' for available commands.");
@@ -127,6 +131,10 @@ fn cmd_help() {
     crate::println!("  save          - save graph to disk");
     crate::println!("  load          - load graph from disk");
     crate::println!("  disk          - show disk info");
+    crate::println!("Task commands:");
+    crate::println!("  ps            - list all tasks");
+    crate::println!("  spawn <name>  - spawn a demo task (counter, fibonacci)");
+    crate::println!("  kill <id>     - kill a task by ID");
 }
 
 fn cmd_info() {
@@ -675,4 +683,53 @@ fn cmd_status() {
     crate::println!("Memory: ~{} KiB used / {} KiB free / {} KiB heap", used_kib, free_kib, total_kib);
     crate::println!("Graph: {} nodes, {} edges", nodes, edges);
     crate::println!("Timer: {} ticks @ 10 MHz", ticks);
+}
+
+// ---------------------------------------------------------------------------
+// Task commands
+// ---------------------------------------------------------------------------
+
+fn cmd_ps() {
+    let tasks = crate::task::list();
+    crate::println!("{:>4}  {:<16} State", "ID", "Name");
+    for (id, name, state) in &tasks {
+        crate::println!("{:>4}  {:<16} {}", id, name, state);
+    }
+}
+
+fn cmd_spawn(name: &str) {
+    if name.is_empty() {
+        crate::println!("Usage: spawn <name>");
+        crate::println!("Available: counter, fibonacci");
+        return;
+    }
+    let f: fn() = match name {
+        "counter" => crate::task::demo_counter,
+        "fibonacci" => crate::task::demo_fibonacci,
+        _ => {
+            crate::println!("Unknown task '{}'. Available: counter, fibonacci", name);
+            return;
+        }
+    };
+    let id = crate::task::spawn(name, f);
+    crate::println!("Spawned task #{} \"{}\"", id, name);
+}
+
+fn cmd_kill(id_str: &str) {
+    let id = match parse_usize(id_str) {
+        Some(v) => v,
+        None => {
+            crate::println!("Usage: kill <id>");
+            return;
+        }
+    };
+    if id == 0 {
+        crate::println!("Cannot kill the shell task.");
+        return;
+    }
+    if crate::task::kill(id) {
+        crate::println!("Killed task #{}", id);
+    } else {
+        crate::println!("Task #{} not found or already done", id);
+    }
 }

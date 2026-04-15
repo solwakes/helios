@@ -12,6 +12,7 @@ mod mm;
 mod panic;
 mod ramfb;
 mod shell;
+mod task;
 mod trap;
 mod uart;
 #[allow(dead_code)]
@@ -90,6 +91,9 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
     println!("[boot] Helios kernel initialized successfully.");
     println!();
 
+    // Initialize cooperative multitasking (creates task #0 = shell)
+    task::init();
+
     // Start the interactive shell
     shell::init();
 
@@ -101,5 +105,8 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
         while let Some(byte) = uart::getc() {
             shell::process_byte(byte);
         }
+
+        // Yield to let other tasks run
+        task::yield_now();
     }
 }
