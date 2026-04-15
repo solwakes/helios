@@ -127,6 +127,8 @@ struct UartWriter;
 impl Write for UartWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         puts(s);
+        // Dual-output: also write to framebuffer console if active
+        crate::console::write_str(s);
         Ok(())
     }
 }

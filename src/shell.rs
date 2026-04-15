@@ -38,6 +38,7 @@ pub fn init() {
 
 /// Enter navigator mode.
 fn enter_nav_mode() {
+    crate::console::set_active(false);
     navigator::init();
     navigator::get_mut().ensure_valid_selection();
     unsafe { NAV_MODE = true; }
@@ -164,6 +165,10 @@ fn process_shell_byte(byte: u8) {
                     crate::uart::putc(0x08);
                     crate::uart::putc(b' ');
                     crate::uart::putc(0x08);
+                    // Mirror to framebuffer console
+                    crate::console::putc(0x08);
+                    crate::console::putc(b' ');
+                    crate::console::putc(0x08);
                 }
             }
             // Printable ASCII
@@ -172,6 +177,8 @@ fn process_shell_byte(byte: u8) {
                     LINE_BUF[LINE_LEN] = byte;
                     LINE_LEN += 1;
                     crate::uart::putc(byte);
+                    // Mirror to framebuffer console
+                    crate::console::putc(byte);
                 }
             }
             // Ignore other bytes
@@ -227,6 +234,8 @@ fn execute(line: &str) {
         // IPC commands
         "ipc" => cmd_ipc(),
         "peek" => cmd_peek(arg1),
+        // Console commands
+        "tty" | "console" => cmd_tty(),
         _ => {
             crate::println!("Unknown command: {}", cmd);
             crate::println!("Type 'help' for available commands.");
@@ -272,6 +281,10 @@ fn cmd_help() {
     crate::println!("IPC commands:");
     crate::println!("  ipc           - list all IPC channels");
     crate::println!("  peek <id>     - peek at a channel's messages");
+    crate::println!("Display commands:");
+    crate::println!("  tty           - switch framebuffer to text console");
+    crate::println!("  render        - switch framebuffer to graph view");
+    crate::println!("  nav           - interactive graph navigator");
 }
 
 fn cmd_info() {
@@ -356,11 +369,9 @@ fn cmd_mem(addr_str: &str, count_str: &str) {
         crate::print!(" ");
         for i in 0..line_len {
             let byte = unsafe { core::ptr::read_volatile((line_addr + i) as *const u8) };
-            if byte >= 0x20 && byte <= 0x7E {
-                crate::uart::putc(byte);
-            } else {
-                crate::uart::putc(b'.');
-            }
+            let ch = if byte >= 0x20 && byte <= 0x7E { byte } else { b'.' };
+            crate::uart::putc(ch);
+            crate::console::putc(ch);
         }
         crate::println!();
 
@@ -680,6 +691,7 @@ fn cmd_rm(id_str: &str) {
 
 fn cmd_render() {
     if crate::framebuffer::get().is_some() {
+        crate::console::set_active(false);
         crate::framebuffer::render_graph();
         crate::println!("Graph rendered to framebuffer.");
     } else {
@@ -917,6 +929,15 @@ fn cmd_kill(id_str: &str) {
 // ---------------------------------------------------------------------------
 // IPC commands
 // ---------------------------------------------------------------------------
+
+fn cmd_tty() {
+    if crate::framebuffer::get().is_some() {
+        crate::console::set_active(true);
+        crate::println!("Framebuffer console active. Type 'render' for graph view.");
+    } else {
+        crate::println!("No framebuffer available (UART-only mode).");
+    }
+}
 
 fn cmd_ipc() {
     let channels = crate::ipc::list_channels();

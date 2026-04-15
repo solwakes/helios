@@ -5,6 +5,7 @@ extern crate alloc;
 
 mod alloc_impl;
 mod arch;
+mod console;
 mod framebuffer;
 mod fwcfg;
 mod graph;
@@ -84,6 +85,9 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
 
     // Initialize framebuffer (ramfb via fw_cfg)
     framebuffer::init();
+
+    // Initialize framebuffer text console (inactive by default — type 'tty' to switch)
+    console::init();
 
     // Set up trap handling and timer interrupts
     trap::init();
