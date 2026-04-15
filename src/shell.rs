@@ -216,6 +216,7 @@ fn execute(line: &str) {
         "render" => cmd_render(),
         "nav" => cmd_nav(),
         "status" => cmd_status(),
+        "gql" => cmd_gql(line),
         "save" => cmd_save(),
         "load" => cmd_load(),
         "disk" => cmd_disk(),
@@ -254,6 +255,7 @@ fn cmd_help() {
     crate::println!("  rm <id>       - remove a node");
     crate::println!("  render        - re-render graph on framebuffer");
     crate::println!("  nav           - interactive graph navigator (framebuffer)");
+    crate::println!("  gql <query>   - graph query language (try: gql type=system)");
     crate::println!("  status        - live system overview");
     crate::println!("Disk commands:");
     crate::println!("  save          - save graph to disk");
@@ -684,6 +686,22 @@ fn cmd_nav() {
     } else {
         crate::println!("No framebuffer available (UART-only mode).");
     }
+}
+
+fn cmd_gql(line: &str) {
+    let rest = line.trim().strip_prefix("gql").unwrap_or("").trim();
+    if rest.is_empty() {
+        crate::println!("Usage: gql <query>");
+        crate::println!("  gql type=system      - filter by type");
+        crate::println!("  gql name~mem         - name substring match");
+        crate::println!("  gql children 1       - children of node 1");
+        crate::println!("  gql path 1 5         - shortest path");
+        crate::println!("  gql count            - total node count");
+        return;
+    }
+    crate::graph::live::refresh_system_nodes();
+    let g = crate::graph::get();
+    crate::graph::query::execute(rest, g);
 }
 
 fn cmd_save() {

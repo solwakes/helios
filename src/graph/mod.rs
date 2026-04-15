@@ -6,6 +6,7 @@ pub mod init;
 pub mod live;
 pub mod navigator;
 pub mod persist;
+pub mod query;
 pub mod render;
 
 use alloc::collections::BTreeMap;
