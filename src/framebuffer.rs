@@ -486,10 +486,7 @@ pub fn init() {
         GLOBAL_FB = Some(fb);
     }
 
-    // Render the graph visualization
-    render_graph();
-
-    crate::println!("[fb] Graph rendered. Framebuffer ready.");
+    crate::println!("[fb] Framebuffer ready.");
 }
 
 /// Re-render the graph on the framebuffer. Called from init and from shell.
@@ -538,21 +535,46 @@ static mut CURSOR_DRAWN_X: u32 = 0;
 static mut CURSOR_DRAWN_Y: u32 = 0;
 
 /// Save the pixels under the cursor area, then draw the cursor sprite.
+/// Optimized with bulk u32/u64 reads and writes per row.
 pub fn draw_cursor(fb: &Framebuffer, x: u32, y: u32) {
     unsafe {
-        // Save pixels under cursor
+        // Save pixels under cursor — row at a time with u64 bulk reads
         for row in 0..CURSOR_H {
-            for col in 0..CURSOR_W {
-                let px = x + col;
-                let py = y + row;
-                let idx = (row * CURSOR_W + col) as usize;
-                if px < fb.width && py < fb.height {
-                    let offset = (py * fb.stride + px * fb.bpp) as usize;
-                    let ptr = fb.base.add(offset) as *const u32;
-                    CURSOR_SAVE[idx] = ptr.read_volatile();
-                } else {
-                    CURSOR_SAVE[idx] = 0;
+            let py = y + row;
+            let save_base = (row * CURSOR_W) as usize;
+            if py >= fb.height {
+                // Off-screen row — zero out save buffer
+                for col in 0..CURSOR_W as usize {
+                    CURSOR_SAVE[save_base + col] = 0;
                 }
+                continue;
+            }
+            // Determine how many columns are visible
+            let visible = if x + CURSOR_W <= fb.width {
+                CURSOR_W
+            } else if x < fb.width {
+                fb.width - x
+            } else {
+                0
+            };
+            let row_offset = (py * fb.stride + x * fb.bpp) as usize;
+            let row_ptr = fb.base.add(row_offset);
+            // Bulk read visible pixels as u64 pairs, then remaining u32
+            let pairs = (visible / 2) as usize;
+            let src64 = row_ptr as *const u64;
+            let dst = &mut CURSOR_SAVE[save_base..];
+            for i in 0..pairs {
+                let dword = src64.add(i).read_volatile();
+                dst[i * 2] = dword as u32;
+                dst[i * 2 + 1] = (dword >> 32) as u32;
+            }
+            if visible & 1 != 0 {
+                let idx = (pairs * 2) as usize;
+                dst[idx] = (row_ptr as *const u32).add(idx).read_volatile();
+            }
+            // Zero out any off-screen columns in save buffer
+            for col in visible as usize..CURSOR_W as usize {
+                CURSOR_SAVE[save_base + col] = 0;
             }
         }
 
@@ -561,15 +583,17 @@ pub fn draw_cursor(fb: &Framebuffer, x: u32, y: u32) {
         let black = Framebuffer::pack_pixel(Pixel::new(0x00, 0x00, 0x00));
 
         for row in 0..CURSOR_H {
-            for col in 0..CURSOR_W {
-                let s = CURSOR_SPRITE[row as usize][col as usize];
+            let py = y + row;
+            if py >= fb.height { break; }
+            let row_offset = (py * fb.stride + x * fb.bpp) as usize;
+            let visible = if x + CURSOR_W <= fb.width { CURSOR_W } else if x < fb.width { fb.width - x } else { 0 };
+            let sprite_row = &CURSOR_SPRITE[row as usize];
+            for col in 0..visible {
+                let s = sprite_row[col as usize];
                 if s == 0 { continue; }
-                let px = x + col;
-                let py = y + row;
-                if px < fb.width && py < fb.height {
-                    let word = if s == 1 { white } else { black };
-                    fb.put_pixel_unchecked(px, py, word);
-                }
+                let word = if s == 1 { white } else { black };
+                let ptr = fb.base.add(row_offset) as *mut u32;
+                ptr.add(col as usize).write_volatile(word);
             }
         }
 
@@ -580,6 +604,7 @@ pub fn draw_cursor(fb: &Framebuffer, x: u32, y: u32) {
 }
 
 /// Restore the pixels that were saved before the cursor was drawn.
+/// Optimized with bulk u64 writes per row.
 pub fn undraw_cursor(fb: &Framebuffer) {
     unsafe {
         if !CURSOR_DRAWN {
@@ -590,15 +615,30 @@ pub fn undraw_cursor(fb: &Framebuffer) {
         let y = CURSOR_DRAWN_Y;
 
         for row in 0..CURSOR_H {
-            for col in 0..CURSOR_W {
-                let px = x + col;
-                let py = y + row;
-                if px < fb.width && py < fb.height {
-                    let idx = (row * CURSOR_W + col) as usize;
-                    let offset = (py * fb.stride + px * fb.bpp) as usize;
-                    let ptr = fb.base.add(offset) as *mut u32;
-                    ptr.write_volatile(CURSOR_SAVE[idx]);
-                }
+            let py = y + row;
+            if py >= fb.height { continue; }
+            let visible = if x + CURSOR_W <= fb.width {
+                CURSOR_W
+            } else if x < fb.width {
+                fb.width - x
+            } else {
+                continue;
+            };
+            let row_offset = (py * fb.stride + x * fb.bpp) as usize;
+            let dst = fb.base.add(row_offset);
+            let save_base = (row * CURSOR_W) as usize;
+            let src = &CURSOR_SAVE[save_base..];
+            // Bulk write u64 pairs
+            let pairs = (visible / 2) as usize;
+            let dst64 = dst as *mut u64;
+            for i in 0..pairs {
+                let lo = src[i * 2] as u64;
+                let hi = src[i * 2 + 1] as u64;
+                dst64.add(i).write_volatile(lo | (hi << 32));
+            }
+            if visible & 1 != 0 {
+                let idx = pairs * 2;
+                (dst as *mut u32).add(idx).write_volatile(src[idx]);
             }
         }
 

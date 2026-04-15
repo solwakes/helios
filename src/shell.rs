@@ -42,9 +42,14 @@ enum EscState {
 static mut ESC_STATE: EscState = EscState::Normal;
 
 /// Print the prompt and mark the shell as active.
+/// If a framebuffer is available, start in navigator mode.
 pub fn init() {
     trap::set_shell_active();
-    crate::print!("{}", PROMPT);
+    if crate::framebuffer::get().is_some() {
+        enter_nav_mode();
+    } else {
+        crate::print!("{}", PROMPT);
+    }
 }
 
 /// Enter navigator mode.
@@ -59,11 +64,10 @@ fn enter_nav_mode() {
     navigator::render_nav();
 }
 
-/// Exit navigator mode.
+/// Exit navigator mode — drop to the text console.
 fn exit_nav_mode() {
     unsafe { NAV_MODE = false; }
-    // Restore the static graph render
-    crate::framebuffer::render_graph();
+    crate::console::set_active(true);
     crate::println!("Exited graph navigator.");
     crate::print!("{}", PROMPT);
 }
@@ -439,8 +443,8 @@ fn cmd_help() {
     crate::println!("  walk <id>     - walk node edges");
     crate::println!("  find <name>   - find nodes by name");
     crate::println!("  rm <id>       - remove a node");
-    crate::println!("  render        - re-render graph on framebuffer");
-    crate::println!("  nav           - interactive graph navigator (framebuffer)");
+    crate::println!("  render        - enter graph navigator (framebuffer)");
+    crate::println!("  nav           - enter graph navigator (framebuffer)");
     crate::println!("  gql <query>   - graph query language (try: gql type=system)");
     crate::println!("  status        - live system overview");
     crate::println!("Disk commands:");
@@ -460,8 +464,7 @@ fn cmd_help() {
     crate::println!("  edit <id>     - line editor for node content");
     crate::println!("Display commands:");
     crate::println!("  tty           - switch framebuffer to text console");
-    crate::println!("  render        - switch framebuffer to graph view");
-    crate::println!("  nav           - interactive graph navigator");
+    crate::println!("  render | nav  - enter graph navigator");
 }
 
 fn cmd_info() {
@@ -868,9 +871,7 @@ fn cmd_rm(id_str: &str) {
 
 fn cmd_render() {
     if crate::framebuffer::get().is_some() {
-        crate::console::set_active(false);
-        crate::framebuffer::render_graph();
-        crate::println!("Graph rendered to framebuffer.");
+        enter_nav_mode();
     } else {
         crate::println!("No framebuffer available (UART-only mode).");
     }
