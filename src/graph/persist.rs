@@ -74,6 +74,7 @@ fn type_to_u8(t: NodeType) -> u8 {
         NodeType::Config => 2,
         NodeType::System => 3,
         NodeType::Directory => 4,
+        NodeType::Computed => 5,
     }
 }
 
@@ -84,6 +85,7 @@ fn u8_to_type(v: u8) -> Option<NodeType> {
         2 => Some(NodeType::Config),
         3 => Some(NodeType::System),
         4 => Some(NodeType::Directory),
+        5 => Some(NodeType::Computed),
         _ => None,
     }
 }

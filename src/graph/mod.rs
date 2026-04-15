@@ -1,6 +1,7 @@
 /// In-memory graph store for Helios.
 /// "Everything is a memory" — nodes with typed content and labeled edges.
 
+pub mod compute;
 pub mod init;
 pub mod live;
 pub mod persist;
@@ -22,6 +23,7 @@ pub enum NodeType {
     Config,
     System,
     Directory,
+    Computed,
 }
 
 impl NodeType {
@@ -32,6 +34,7 @@ impl NodeType {
             "config" => Some(NodeType::Config),
             "system" => Some(NodeType::System),
             "dir" => Some(NodeType::Directory),
+            "computed" | "comp" => Some(NodeType::Computed),
             _ => None,
         }
     }
@@ -45,6 +48,7 @@ impl fmt::Display for NodeType {
             NodeType::Config => write!(f, "config"),
             NodeType::System => write!(f, "system"),
             NodeType::Directory => write!(f, "dir"),
+            NodeType::Computed => write!(f, "computed"),
         }
     }
 }
@@ -62,6 +66,24 @@ pub struct Node {
     pub name: String,
     pub content: Vec<u8>,
     pub edges: Vec<Edge>,
+}
+
+impl Node {
+    /// Return the display content for this node. For computed nodes, evaluates
+    /// the formula; for others, returns the content as a string (or a placeholder).
+    pub fn display_content(&self, graph: &Graph) -> alloc::string::String {
+        if self.type_tag == NodeType::Computed {
+            let formula = core::str::from_utf8(&self.content).unwrap_or("");
+            compute::evaluate(formula, graph)
+        } else if self.content.is_empty() {
+            alloc::string::String::from("(empty)")
+        } else {
+            match core::str::from_utf8(&self.content) {
+                Ok(s) => alloc::string::String::from(s),
+                Err(_) => alloc::format!("({} bytes, binary)", self.content.len()),
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

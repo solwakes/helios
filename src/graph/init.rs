@@ -48,6 +48,16 @@ pub fn bootstrap() {
     g.add_edge(sys_id, "child", timer_id);
     g.add_edge(sys_id, "child", cpu_id);
 
+    // ID 9: dashboard (computed reactive node)
+    // Create a computed "dashboard" node under root
+    let dash_id = g.create_node(NodeType::Computed, "dashboard");
+    g.add_edge(root_id, "child", dash_id);
+    if let Some(node) = g.get_node_mut(dash_id) {
+        node.content = alloc::vec::Vec::from(
+            "$template{Uptime: $uptime | Heap: $mem | Graph: $graph}".as_bytes()
+        );
+    }
+
     // Populate all system nodes with initial live data
     super::live::refresh_system_nodes();
 }

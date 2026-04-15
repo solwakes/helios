@@ -118,7 +118,7 @@ fn cmd_help() {
     crate::println!("  graph         - graph stats");
     crate::println!("  nodes         - list all nodes");
     crate::println!("  node <id>     - show node details");
-    crate::println!("  mknode <t> <n>- create node (text/binary/config/system/dir)");
+    crate::println!("  mknode <t> <n>- create node (text/binary/config/system/dir/comp)");
     crate::println!("  edge <f> <l> <t> - add edge from node f to t");
     crate::println!("  set <id> ...  - set node content");
     crate::println!("  cat <id>      - show node content");
@@ -322,7 +322,12 @@ fn cmd_node(id_str: &str) {
     };
 
     crate::println!("Node #{} \"{}\" ({})", node.id, node.name, node.type_tag);
-    if node.content.is_empty() {
+    if node.type_tag == crate::graph::NodeType::Computed {
+        let formula = core::str::from_utf8(&node.content).unwrap_or("(invalid)");
+        crate::println!("  Formula: {}", formula);
+        let result = node.display_content(g);
+        crate::println!("  Result:  {}", result);
+    } else if node.content.is_empty() {
         crate::println!("  Content: (empty)");
     } else {
         match core::str::from_utf8(&node.content) {
@@ -359,7 +364,7 @@ fn cmd_mknode(type_str: &str, name_str: &str) {
     let type_tag = match crate::graph::NodeType::from_str(type_str) {
         Some(t) => t,
         None => {
-            crate::println!("Unknown type '{}'. Use: text, binary, config, system, dir", type_str);
+            crate::println!("Unknown type '{}'. Use: text, binary, config, system, dir, comp", type_str);
             return;
         }
     };
@@ -435,7 +440,10 @@ fn cmd_cat(id_str: &str) {
     let g = crate::graph::get();
     match g.get_node(id) {
         Some(node) => {
-            if node.content.is_empty() {
+            if node.type_tag == crate::graph::NodeType::Computed {
+                let result = node.display_content(g);
+                crate::println!("{}", result);
+            } else if node.content.is_empty() {
                 crate::println!("(empty)");
             } else {
                 match core::str::from_utf8(&node.content) {
