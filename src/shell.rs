@@ -2,6 +2,7 @@
 
 use crate::arch::riscv64 as arch;
 use crate::trap;
+use crate::graph::navigator::{self, NavInput};
 
 const MAX_LINE: usize = 256;
 const PROMPT: &str = "helios> ";
@@ -12,14 +13,139 @@ const TIMER_FREQ: usize = 10_000_000;
 static mut LINE_BUF: [u8; MAX_LINE] = [0u8; MAX_LINE];
 static mut LINE_LEN: usize = 0;
 
+// ---------------------------------------------------------------------------
+// Mode & escape sequence state
+// ---------------------------------------------------------------------------
+
+/// Whether we are in navigator mode (true) or shell mode (false).
+static mut NAV_MODE: bool = false;
+
+/// Escape sequence parser state.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EscState {
+    Normal,
+    GotEsc,   // received 0x1b
+    GotBracket, // received 0x1b [
+}
+
+static mut ESC_STATE: EscState = EscState::Normal;
+
 /// Print the prompt and mark the shell as active.
 pub fn init() {
     trap::set_shell_active();
     crate::print!("{}", PROMPT);
 }
 
+/// Enter navigator mode.
+fn enter_nav_mode() {
+    navigator::init();
+    navigator::get_mut().ensure_valid_selection();
+    unsafe { NAV_MODE = true; }
+    crate::println!("Entering graph navigator. Press 'q' or Escape to exit.");
+    // Refresh live data and render
+    crate::graph::live::refresh_system_nodes();
+    navigator::render_nav();
+}
+
+/// Exit navigator mode.
+fn exit_nav_mode() {
+    unsafe { NAV_MODE = false; }
+    // Restore the static graph render
+    crate::framebuffer::render_graph();
+    crate::println!("Exited graph navigator.");
+    crate::print!("{}", PROMPT);
+}
+
 /// Process a single byte received from the UART.
 pub fn process_byte(byte: u8) {
+    unsafe {
+        // Escape sequence state machine (works in both modes)
+        match ESC_STATE {
+            EscState::GotEsc => {
+                if byte == b'[' {
+                    ESC_STATE = EscState::GotBracket;
+                    return;
+                }
+                // Not a CSI sequence — handle ESC alone
+                ESC_STATE = EscState::Normal;
+                if NAV_MODE {
+                    // Bare Escape => quit
+                    exit_nav_mode();
+                    return;
+                }
+                // In shell mode, ignore bare escape
+                return;
+            }
+            EscState::GotBracket => {
+                ESC_STATE = EscState::Normal;
+                if NAV_MODE {
+                    let input = match byte {
+                        b'A' => Some(NavInput::Up),
+                        b'B' => Some(NavInput::Down),
+                        b'C' => Some(NavInput::Right),
+                        b'D' => Some(NavInput::Left),
+                        _ => None,
+                    };
+                    if let Some(inp) = input {
+                        handle_nav_input(inp);
+                    }
+                    return;
+                }
+                // In shell mode, ignore arrow keys
+                return;
+            }
+            EscState::Normal => {
+                if byte == 0x1b {
+                    ESC_STATE = EscState::GotEsc;
+                    return;
+                }
+            }
+        }
+
+        // Route to navigator or shell
+        if NAV_MODE {
+            process_nav_byte(byte);
+        } else {
+            process_shell_byte(byte);
+        }
+    }
+}
+
+/// Process a byte in navigator mode.
+fn process_nav_byte(byte: u8) {
+    let input = match byte {
+        b'q' => Some(NavInput::Quit),
+        b'\r' | b'\n' | b' ' => Some(NavInput::ToggleCollapse),
+        b'\t' | b'd' => Some(NavInput::ToggleDetail),
+        b'r' => Some(NavInput::Refresh),
+        _ => None,
+    };
+    if let Some(inp) = input {
+        handle_nav_input(inp);
+    }
+}
+
+/// Handle a navigator input action.
+fn handle_nav_input(input: NavInput) {
+    let nav = navigator::get_mut();
+    match nav.handle_input(input) {
+        None => {
+            // Quit
+            exit_nav_mode();
+        }
+        Some(true) => {
+            // Re-render needed
+            crate::graph::live::refresh_system_nodes();
+            navigator::render_nav();
+        }
+        Some(false) => {
+            // No change, skip re-render
+        }
+    }
+}
+
+/// Process a byte in shell mode.
+fn process_shell_byte(byte: u8) {
     unsafe {
         match byte {
             // Enter (CR or LF)
@@ -48,7 +174,7 @@ pub fn process_byte(byte: u8) {
                     crate::uart::putc(byte);
                 }
             }
-            // Ignore other bytes (e.g. escape sequences)
+            // Ignore other bytes
             _ => {}
         }
     }
@@ -88,6 +214,7 @@ fn execute(line: &str) {
         "find" => cmd_find(arg1),
         "rm" => cmd_rm(arg1),
         "render" => cmd_render(),
+        "nav" => cmd_nav(),
         "status" => cmd_status(),
         "save" => cmd_save(),
         "load" => cmd_load(),
@@ -126,6 +253,7 @@ fn cmd_help() {
     crate::println!("  find <name>   - find nodes by name");
     crate::println!("  rm <id>       - remove a node");
     crate::println!("  render        - re-render graph on framebuffer");
+    crate::println!("  nav           - interactive graph navigator (framebuffer)");
     crate::println!("  status        - live system overview");
     crate::println!("Disk commands:");
     crate::println!("  save          - save graph to disk");
@@ -545,6 +673,14 @@ fn cmd_render() {
     if crate::framebuffer::get().is_some() {
         crate::framebuffer::render_graph();
         crate::println!("Graph rendered to framebuffer.");
+    } else {
+        crate::println!("No framebuffer available (UART-only mode).");
+    }
+}
+
+fn cmd_nav() {
+    if crate::framebuffer::get().is_some() {
+        enter_nav_mode();
     } else {
         crate::println!("No framebuffer available (UART-only mode).");
     }
