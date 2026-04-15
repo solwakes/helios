@@ -83,6 +83,9 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
         }
     }
 
+    // Initialize VirtIO keyboard input
+    virtio::input::init();
+
     // Initialize framebuffer (ramfb via fw_cfg)
     framebuffer::init();
 
@@ -113,6 +116,9 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
         while let Some(byte) = uart::getc() {
             shell::process_byte(byte);
         }
+
+        // Poll VirtIO keyboard for input events
+        virtio::input::poll();
 
         // Yield to let other tasks run
         task::yield_now();
