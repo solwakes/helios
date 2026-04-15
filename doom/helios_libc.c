@@ -334,6 +334,24 @@ int vsnprintf(char *buf, size_t max, const char *fmt, va_list ap) {
             fmt++;
         }
 
+        /* precision */
+        int has_precision = 0, precision = 0;
+        if (*fmt == '.') {
+            has_precision = 1;
+            fmt++;
+            while (*fmt >= '0' && *fmt <= '9') {
+                precision = precision * 10 + (*fmt - '0');
+                fmt++;
+            }
+        }
+
+        /* For integers, precision overrides zero_pad behavior */
+        if (has_precision) {
+            /* precision for integers = minimum digits, effectively zero-padded */
+            if (precision > width) width = precision;
+            zero_pad = 1;
+        }
+
         /* length modifier */
         int is_long = 0;
         if (*fmt == 'l') { is_long = 1; fmt++; }
