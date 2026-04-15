@@ -224,6 +224,9 @@ fn execute(line: &str) {
         "ps" => cmd_ps(),
         "spawn" => cmd_spawn(arg1),
         "kill" => cmd_kill(arg1),
+        // IPC commands
+        "ipc" => cmd_ipc(),
+        "peek" => cmd_peek(arg1),
         _ => {
             crate::println!("Unknown command: {}", cmd);
             crate::println!("Type 'help' for available commands.");
@@ -263,8 +266,12 @@ fn cmd_help() {
     crate::println!("  disk          - show disk info");
     crate::println!("Task commands:");
     crate::println!("  ps            - list all tasks with preemption stats");
-    crate::println!("  spawn <name>  - spawn a demo task (counter, fibonacci, busyloop)");
+    crate::println!("  spawn <name>  - spawn a demo task (counter, fibonacci, busyloop,");
+    crate::println!("                  producer, consumer, pingpong)");
     crate::println!("  kill <id>     - kill a task by ID");
+    crate::println!("IPC commands:");
+    crate::println!("  ipc           - list all IPC channels");
+    crate::println!("  peek <id>     - peek at a channel's messages");
 }
 
 fn cmd_info() {
@@ -488,7 +495,7 @@ fn cmd_node(id_str: &str) {
 fn cmd_mknode(type_str: &str, name_str: &str) {
     if type_str.is_empty() || name_str.is_empty() {
         crate::println!("Usage: mknode <type> <name>");
-        crate::println!("Types: text, binary, config, system, dir");
+        crate::println!("Types: text, binary, config, system, dir, channel");
         return;
     }
     let type_tag = match crate::graph::NodeType::from_str(type_str) {
@@ -862,15 +869,25 @@ fn cmd_ps() {
 fn cmd_spawn(name: &str) {
     if name.is_empty() {
         crate::println!("Usage: spawn <name>");
-        crate::println!("Available: counter, fibonacci, busyloop");
+        crate::println!("Available: counter, fibonacci, busyloop, producer, consumer, pingpong");
         return;
+    }
+    match name {
+        "pingpong" => {
+            // Special case: spawns two tasks
+            crate::task::spawn_pingpong();
+            return;
+        }
+        _ => {}
     }
     let f: fn() = match name {
         "counter" => crate::task::demo_counter,
         "fibonacci" => crate::task::demo_fibonacci,
         "busyloop" => crate::task::demo_busyloop,
+        "producer" => crate::task::demo_producer,
+        "consumer" => crate::task::demo_consumer,
         _ => {
-            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop", name);
+            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong", name);
             return;
         }
     };
@@ -894,5 +911,40 @@ fn cmd_kill(id_str: &str) {
         crate::println!("Killed task #{}", id);
     } else {
         crate::println!("Task #{} not found or already done", id);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IPC commands
+// ---------------------------------------------------------------------------
+
+fn cmd_ipc() {
+    let channels = crate::ipc::list_channels();
+    if channels.is_empty() {
+        crate::println!("No IPC channels. Use 'spawn producer' or 'spawn pingpong' to create some.");
+        return;
+    }
+    crate::println!("{:>4}  {:<16} {:<6} Content", "ID", "Name", "Msgs");
+    for (id, name, msgs, preview) in &channels {
+        let display = if preview.is_empty() {
+            alloc::string::String::from("(empty)")
+        } else {
+            preview.replace('\n', " | ")
+        };
+        crate::println!("{:>4}  {:<16} {:<6} {}", id, name, msgs, display);
+    }
+}
+
+fn cmd_peek(id_str: &str) {
+    let id = match parse_u64(id_str) {
+        Some(v) => v,
+        None => {
+            crate::println!("Usage: peek <channel_id>");
+            return;
+        }
+    };
+    match crate::ipc::peek(id) {
+        Some(msg) => crate::println!("Channel #{} next message: {}", id, msg),
+        None => crate::println!("Channel #{}: empty (or not a channel)", id),
     }
 }

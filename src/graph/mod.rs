@@ -26,6 +26,7 @@ pub enum NodeType {
     System,
     Directory,
     Computed,
+    Channel,
 }
 
 impl NodeType {
@@ -37,6 +38,7 @@ impl NodeType {
             "system" => Some(NodeType::System),
             "dir" => Some(NodeType::Directory),
             "computed" | "comp" => Some(NodeType::Computed),
+            "channel" => Some(NodeType::Channel),
             _ => None,
         }
     }
@@ -51,6 +53,7 @@ impl fmt::Display for NodeType {
             NodeType::System => write!(f, "system"),
             NodeType::Directory => write!(f, "dir"),
             NodeType::Computed => write!(f, "computed"),
+            NodeType::Channel => write!(f, "channel"),
         }
     }
 }

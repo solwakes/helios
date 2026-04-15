@@ -490,3 +490,122 @@ pub fn preempt_count_current() -> usize {
     let current_idx = unsafe { CURRENT_TASK };
     tasks()[current_idx].preempt_count
 }
+
+// ---------------------------------------------------------------------------
+// IPC demo tasks
+// ---------------------------------------------------------------------------
+
+/// Well-known channel ID shared between producer and consumer demos.
+/// Set by the producer task when it creates the channel.
+static mut PRODUCER_CHANNEL_ID: u64 = 0;
+
+/// Well-known channel ID for ping-pong demo.
+static mut PINGPONG_CHANNEL_ID: u64 = 0;
+
+/// Producer demo: creates a channel and writes incrementing messages.
+pub fn demo_producer() {
+    let ch_id = crate::ipc::create_channel("producer-ch");
+    unsafe { PRODUCER_CHANNEL_ID = ch_id; }
+    crate::println!("[producer] Created channel #{}", ch_id);
+
+    for i in 1..=10 {
+        let msg = alloc::format!("message #{} from producer", i);
+        crate::ipc::send(ch_id, &msg);
+        crate::println!("[producer] Sent: {}", msg);
+        // Yield a few times to let consumer run
+        yield_now();
+        yield_now();
+    }
+    crate::println!("[producer] Done (10 messages sent)");
+}
+
+/// Consumer demo: reads messages from the producer's channel.
+pub fn demo_consumer() {
+    let ch_id = unsafe { PRODUCER_CHANNEL_ID };
+    if ch_id == 0 {
+        crate::println!("[consumer] No producer channel found! Spawn 'producer' first.");
+        return;
+    }
+    crate::println!("[consumer] Listening on channel #{}", ch_id);
+
+    let mut received = 0;
+    let mut empty_rounds = 0;
+    loop {
+        if let Some(msg) = crate::ipc::recv(ch_id) {
+            crate::println!("[consumer] Received: {}", msg);
+            received += 1;
+            empty_rounds = 0;
+        } else {
+            empty_rounds += 1;
+            // Stop after many empty rounds (producer is done)
+            if empty_rounds > 20 {
+                break;
+            }
+        }
+        yield_now();
+    }
+    crate::println!("[consumer] Done ({} messages received)", received);
+}
+
+/// Ping task: writes "ping", waits for "pong".
+pub fn demo_ping() {
+    let ch_id = unsafe { PINGPONG_CHANNEL_ID };
+    for round in 1..=5 {
+        let msg = alloc::format!("ping #{}", round);
+        crate::ipc::broadcast(ch_id, &msg);
+        crate::println!("[ping] Sent: {}", msg);
+        yield_now();
+        yield_now();
+
+        // Wait for pong
+        let mut attempts = 0;
+        loop {
+            if let Some(val) = crate::ipc::read(ch_id) {
+                if val.starts_with("pong") {
+                    crate::println!("[ping] Got: {}", val);
+                    break;
+                }
+            }
+            attempts += 1;
+            if attempts > 20 { break; }
+            yield_now();
+        }
+    }
+    crate::ipc::broadcast(ch_id, "done");
+    crate::println!("[ping] Ping-pong complete!");
+}
+
+/// Pong task: waits for "ping", replies with "pong".
+pub fn demo_pong() {
+    let ch_id = unsafe { PINGPONG_CHANNEL_ID };
+    let mut rounds = 0;
+    let mut idle = 0;
+    loop {
+        if let Some(val) = crate::ipc::read(ch_id) {
+            if val.starts_with("ping") {
+                let reply = alloc::format!("pong #{}", rounds + 1);
+                crate::println!("[pong] Got: {} -> Replying: {}", val, reply);
+                crate::ipc::broadcast(ch_id, &reply);
+                rounds += 1;
+                idle = 0;
+            } else if val == "done" {
+                break;
+            }
+        } else {
+            idle += 1;
+            if idle > 50 { break; }
+        }
+        yield_now();
+    }
+    crate::println!("[pong] Done ({} rounds)", rounds);
+}
+
+/// Spawn the ping-pong pair (creates channel, spawns both tasks).
+pub fn spawn_pingpong() {
+    let ch_id = crate::ipc::create_channel("pingpong-ch");
+    unsafe { PINGPONG_CHANNEL_ID = ch_id; }
+    crate::println!("[pingpong] Created channel #{}", ch_id);
+    let id1 = spawn("ping", demo_ping);
+    let id2 = spawn("pong", demo_pong);
+    crate::println!("[pingpong] Spawned ping (task #{}) and pong (task #{})", id1, id2);
+}

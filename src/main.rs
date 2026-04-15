@@ -8,6 +8,7 @@ mod arch;
 mod framebuffer;
 mod fwcfg;
 mod graph;
+mod ipc;
 mod mm;
 mod panic;
 mod ramfb;
@@ -90,6 +91,9 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
     println!();
     println!("[boot] Helios kernel initialized successfully.");
     println!();
+
+    // Initialize IPC subsystem (creates ipc directory node)
+    ipc::init();
 
     // Initialize cooperative multitasking (creates task #0 = shell)
     task::init();

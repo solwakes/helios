@@ -42,6 +42,7 @@ fn border_color(nt: NodeType) -> Pixel {
         NodeType::Config    => Pixel::new(0xff, 0x88, 0x44), // orange
         NodeType::Binary    => Pixel::new(0xaa, 0x66, 0xff), // purple
         NodeType::Computed  => Pixel::new(0x00, 0xcc, 0xaa), // teal/cyan
+        NodeType::Channel   => Pixel::new(0xff, 0x66, 0xcc), // magenta/pink
     }
 }
 
