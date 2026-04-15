@@ -26,6 +26,7 @@ written in Rust, targeting RISC-V 64-bit, running on QEMU.
 - **reactive computed nodes** — formulas that evaluate against the graph at read time
 - **persistent storage** — graph serialized to virtio-blk disk, auto-loaded on boot
 - **proper memory management** — linked-list allocator with coalescing
+- **DOOM** — yes, it runs Doom (cross-compiled C engine, embedded shareware WAD, 2× scaled rendering)
 
 ## building
 
@@ -168,6 +169,10 @@ Script #14: 3 commands executed
 
 ![navigator](screenshots/m19-navigator-keyboard.png)
 
+**DOOM running on Helios (M21)**
+
+![doom](screenshots/m21-doom.png)
+
 ## architecture
 
 ```
@@ -194,7 +199,12 @@ src/
     live.rs            live system node refresh
     init.rs            graph bootstrap
   task/                preemptive + cooperative multitasking
+  doom.rs              DOOM platform layer (DG_* functions, key mapping, framebuffer blit)
+  memfuncs.rs          volatile mem* implementations (prevents LLVM recursion)
   virtio/              VirtIO MMIO transport, block device, keyboard input
+doom/
+  helios_libc.c        bare-metal libc (malloc, printf, memfs file I/O)
+  include/             freestanding C headers
 ```
 
 ## the idea
@@ -234,6 +244,7 @@ the graph is the filesystem, the process table, the device tree, and the IPC mec
 | M18 | framebuffer text console | `60ec256` |
 | M19 | VirtIO keyboard input | `30383d2` |
 | M20 | shell scripting | `f68c37f` |
+| M21 | DOOM | `9849084` |
 
 ## license
 
