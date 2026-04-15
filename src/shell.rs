@@ -6,12 +6,23 @@ use crate::graph::navigator::{self, NavInput};
 
 const MAX_LINE: usize = 256;
 const PROMPT: &str = "helios> ";
+const EDIT_PROMPT: &str = "| ";
 
 /// Timer frequency on QEMU virt (10 MHz).
 const TIMER_FREQ: usize = 10_000_000;
 
 static mut LINE_BUF: [u8; MAX_LINE] = [0u8; MAX_LINE];
 static mut LINE_LEN: usize = 0;
+
+/// Whether a script is currently executing (prevents recursive `run`).
+static mut RUNNING_SCRIPT: bool = false;
+
+/// Whether we are in edit mode.
+static mut EDIT_MODE: bool = false;
+/// The node ID being edited.
+static mut EDIT_NODE_ID: u64 = 0;
+/// Accumulation buffer for edit mode.
+static mut EDIT_BUFFER: Option<alloc::vec::Vec<u8>> = None;
 
 // ---------------------------------------------------------------------------
 // Mode & escape sequence state
@@ -103,9 +114,11 @@ pub fn process_byte(byte: u8) {
             }
         }
 
-        // Route to navigator or shell
+        // Route to navigator, edit mode, or shell
         if NAV_MODE {
             process_nav_byte(byte);
+        } else if EDIT_MODE {
+            process_edit_byte(byte);
         } else {
             process_shell_byte(byte);
         }
@@ -141,6 +154,92 @@ fn handle_nav_input(input: NavInput) {
         }
         Some(false) => {
             // No change, skip re-render
+        }
+    }
+}
+
+/// Process a byte in edit mode — accumulate lines into EDIT_BUFFER.
+fn process_edit_byte(byte: u8) {
+    unsafe {
+        match byte {
+            // Enter (CR or LF)
+            0x0D | 0x0A => {
+                crate::println!();
+                let line = core::str::from_utf8_unchecked(&LINE_BUF[..LINE_LEN]);
+                if line.is_empty() {
+                    // Empty line => finish editing
+                    let buf = EDIT_BUFFER.take().unwrap_or_default();
+                    let byte_count = buf.len();
+                    let node_id = EDIT_NODE_ID;
+                    EDIT_MODE = false;
+
+                    let g = crate::graph::get_mut();
+                    match g.get_node_mut(node_id) {
+                        Some(node) => {
+                            node.content = buf;
+                            crate::println!("Node #{} updated ({} bytes)", node_id, byte_count);
+                        }
+                        None => {
+                            crate::println!("Node #{} not found (edit discarded)", node_id);
+                        }
+                    }
+                    LINE_LEN = 0;
+                    crate::print!("{}", PROMPT);
+                } else {
+                    // Append this line to the edit buffer
+                    if let Some(ref mut buf) = EDIT_BUFFER {
+                        if !buf.is_empty() {
+                            buf.push(b'\n');
+                        }
+                        buf.extend_from_slice(&LINE_BUF[..LINE_LEN]);
+                    }
+                    LINE_LEN = 0;
+                    crate::print!("{}", EDIT_PROMPT);
+                }
+            }
+            // Backspace (DEL or BS)
+            0x7F | 0x08 => {
+                if LINE_LEN > 0 {
+                    LINE_LEN -= 1;
+                    crate::uart::putc(0x08);
+                    crate::uart::putc(b' ');
+                    crate::uart::putc(0x08);
+                    crate::console::putc(0x08);
+                    crate::console::putc(b' ');
+                    crate::console::putc(0x08);
+                }
+            }
+            // Ctrl-D => finish editing (like empty line)
+            0x04 => {
+                crate::println!();
+                let buf = EDIT_BUFFER.take().unwrap_or_default();
+                let byte_count = buf.len();
+                let node_id = EDIT_NODE_ID;
+                EDIT_MODE = false;
+
+                let g = crate::graph::get_mut();
+                match g.get_node_mut(node_id) {
+                    Some(node) => {
+                        node.content = buf;
+                        crate::println!("Node #{} updated ({} bytes)", node_id, byte_count);
+                    }
+                    None => {
+                        crate::println!("Node #{} not found (edit discarded)", node_id);
+                    }
+                }
+                LINE_LEN = 0;
+                crate::print!("{}", PROMPT);
+            }
+            // Printable ASCII
+            0x20..=0x7E => {
+                if LINE_LEN < MAX_LINE {
+                    LINE_BUF[LINE_LEN] = byte;
+                    LINE_LEN += 1;
+                    crate::uart::putc(byte);
+                    crate::console::putc(byte);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -234,6 +333,9 @@ fn execute(line: &str) {
         // IPC commands
         "ipc" => cmd_ipc(),
         "peek" => cmd_peek(arg1),
+        // Scripting commands
+        "run" => cmd_run(arg1),
+        "edit" => cmd_edit(arg1),
         // Console commands
         "tty" | "console" => cmd_tty(),
         _ => {
@@ -281,6 +383,9 @@ fn cmd_help() {
     crate::println!("IPC commands:");
     crate::println!("  ipc           - list all IPC channels");
     crate::println!("  peek <id>     - peek at a channel's messages");
+    crate::println!("Scripting commands:");
+    crate::println!("  run <id>      - execute a text node as a script");
+    crate::println!("  edit <id>     - line editor for node content");
     crate::println!("Display commands:");
     crate::println!("  tty           - switch framebuffer to text console");
     crate::println!("  render        - switch framebuffer to graph view");
@@ -864,6 +969,102 @@ fn cmd_status() {
     crate::println!("Memory: ~{} KiB used / {} KiB free / {} KiB heap", used_kib, free_kib, total_kib);
     crate::println!("Graph: {} nodes, {} edges", nodes, edges);
     crate::println!("Timer: {} ticks @ 10 MHz", ticks);
+}
+
+// ---------------------------------------------------------------------------
+// Scripting commands
+// ---------------------------------------------------------------------------
+
+fn cmd_run(id_str: &str) {
+    let id = match parse_u64(id_str) {
+        Some(v) => v,
+        None => {
+            crate::println!("Usage: run <node_id>");
+            return;
+        }
+    };
+
+    // Prevent recursive script execution
+    unsafe {
+        if RUNNING_SCRIPT {
+            crate::println!("Error: cannot nest 'run' — script already executing");
+            return;
+        }
+    }
+
+    // Read the node content
+    let content = {
+        let g = crate::graph::get();
+        match g.get_node(id) {
+            Some(node) => {
+                match core::str::from_utf8(&node.content) {
+                    Ok(s) => alloc::string::String::from(s),
+                    Err(_) => {
+                        crate::println!("Node #{} content is not valid UTF-8", id);
+                        return;
+                    }
+                }
+            }
+            None => {
+                crate::println!("Node #{} not found", id);
+                return;
+            }
+        }
+    };
+
+    if content.is_empty() {
+        crate::println!("Node #{} is empty — nothing to execute", id);
+        return;
+    }
+
+    unsafe { RUNNING_SCRIPT = true; }
+
+    let mut cmd_count: usize = 0;
+    for line in content.split('\n') {
+        let line = line.trim();
+        // Skip blank lines and comments
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        crate::println!("> {}", line);
+        execute(line);
+        cmd_count += 1;
+    }
+
+    unsafe { RUNNING_SCRIPT = false; }
+
+    crate::println!("Script #{}: {} commands executed", id, cmd_count);
+}
+
+fn cmd_edit(id_str: &str) {
+    let id = match parse_u64(id_str) {
+        Some(v) => v,
+        None => {
+            crate::println!("Usage: edit <node_id>");
+            return;
+        }
+    };
+
+    // Verify the node exists
+    let name = {
+        let g = crate::graph::get();
+        match g.get_node(id) {
+            Some(node) => alloc::string::String::from(node.name.as_str()),
+            None => {
+                crate::println!("Node #{} not found", id);
+                return;
+            }
+        }
+    };
+
+    crate::println!("Editing node #{} \"{}\". Enter lines, empty line to finish.", id, name);
+    crate::print!("{}", EDIT_PROMPT);
+
+    unsafe {
+        EDIT_MODE = true;
+        EDIT_NODE_ID = id;
+        EDIT_BUFFER = Some(alloc::vec::Vec::new());
+    }
 }
 
 // ---------------------------------------------------------------------------
