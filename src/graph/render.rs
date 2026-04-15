@@ -447,7 +447,7 @@ pub fn render_navigated(fb: &Framebuffer, graph: &Graph, nav: &NavigatorState) {
     fb.draw_hline(sep_x, sep_y, sep_w, SEP_C);
 
     // Hint bar below title
-    let hint = "[Arrows:nav] [Enter:expand] [d:detail] [q:quit]";
+    let hint = "[Arrows:nav] [Enter:expand] [d:detail] [t:terminal] [q:quit]";
     let hint_w = hint.len() as u32 * CHAR_W_S;
     let hint_x = (fb.width.saturating_sub(hint_w)) / 2;
     draw_string(fb, hint, hint_x, sep_y + 4, SCALE_S, SUMMARY_C);
