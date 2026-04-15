@@ -6,10 +6,13 @@ extern crate alloc;
 mod alloc_impl;
 mod arch;
 mod console;
+mod doom;
 mod framebuffer;
 mod fwcfg;
 mod graph;
 mod ipc;
+#[allow(dead_code)]
+mod memfuncs;
 mod mm;
 mod panic;
 mod ramfb;
@@ -19,7 +22,6 @@ mod trap;
 mod uart;
 #[allow(dead_code)]
 mod virtio;
-mod doom;
 
 use arch::riscv64 as arch_impl;
 

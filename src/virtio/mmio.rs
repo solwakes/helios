@@ -214,18 +214,9 @@ impl VirtioMmio {
             let align = 4096usize;
             let page1 = align_up(desc_bytes + avail_bytes, align);
             let total = page1 + align_up(used_bytes, align);
-            crate::println!("[virtio]   alloc {} bytes (page1={}, total={})", total, page1, total);
             let layout =
                 core::alloc::Layout::from_size_align(total, 4096).unwrap();
-            let buf = unsafe { alloc::alloc::alloc(layout) };
-            crate::println!("[virtio]   alloc returned {:#x}", buf as usize);
-            if !buf.is_null() {
-                // Zero manually using volatile writes to avoid memset issues
-                for i in 0..total {
-                    unsafe { buf.add(i).write_volatile(0); }
-                }
-                crate::println!("[virtio]   zeroed OK");
-            }
+            let buf = unsafe { alloc::alloc::alloc_zeroed(layout) };
             if buf.is_null() {
                 crate::println!("[virtio] Failed to allocate queue memory");
                 return None;

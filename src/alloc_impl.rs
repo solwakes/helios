@@ -198,6 +198,27 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
         core::ptr::null_mut()
     }
 
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        let ptr = self.alloc(layout);
+        if !ptr.is_null() {
+            // Zero with volatile writes — prevents LLVM from optimising
+            // this into a memset call (which would recurse infinitely
+            // due to the compiler-builtins memset bug on RISC-V).
+            let size = layout.size();
+            let mut i = 0usize;
+            let aligned = size & !7;
+            while i < aligned {
+                (ptr.add(i) as *mut u64).write_volatile(0);
+                i += 8;
+            }
+            while i < size {
+                ptr.add(i).write_volatile(0);
+                i += 1;
+            }
+        }
+        ptr
+    }
+
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let align = if layout.align() > ALIGN { layout.align() } else { ALIGN };
         let size = align_up(layout.size(), align);
