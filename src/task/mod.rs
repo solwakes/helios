@@ -1,10 +1,13 @@
-/// Cooperative multitasking for Helios.
+/// Cooperative & preemptive multitasking for Helios.
 /// Each task is a graph node — the graph model IS the process model.
+/// Tasks can yield cooperatively via `yield_now()`, and will also be
+/// preempted by the timer interrupt handler if they don't yield.
 
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::global_asm;
 
+use crate::arch::riscv64 as arch;
 use crate::graph;
 use crate::graph::NodeType;
 
@@ -62,6 +65,8 @@ pub struct Task {
     pub context: TaskContext,
     pub stack: Vec<u8>,
     pub graph_node_id: u64,
+    /// Number of times this task has been preempted by the timer.
+    pub preempt_count: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +188,7 @@ pub fn init() {
         context: TaskContext::zero(),
         stack: Vec::new(), // shell uses the kernel boot stack
         graph_node_id: shell_node_id,
+        preempt_count: 0,
     };
 
     unsafe {
@@ -191,7 +197,7 @@ pub fn init() {
     }
     tasks_mut().push(shell_task);
 
-    crate::println!("[task] Cooperative multitasking initialized (task #0 = shell)");
+    crate::println!("[task] Preemptive multitasking initialized (task #0 = shell)");
 }
 
 /// Spawn a new task with the given name and function.
@@ -237,6 +243,7 @@ pub fn spawn(name: &str, f: fn()) -> usize {
         context: ctx,
         stack,
         graph_node_id: node_id,
+        preempt_count: 0,
     };
 
     tasks_mut().push(task);
@@ -322,11 +329,11 @@ pub fn kill(id: usize) -> bool {
     }
 }
 
-/// List all tasks. Returns (id, name, state) tuples.
-pub fn list() -> Vec<(usize, String, TaskState)> {
+/// List all tasks. Returns (id, name, state, preempt_count) tuples.
+pub fn list() -> Vec<(usize, String, TaskState, usize)> {
     tasks()
         .iter()
-        .map(|t| (t.id, t.name.clone(), t.state))
+        .map(|t| (t.id, t.name.clone(), t.state, t.preempt_count))
         .collect()
 }
 
@@ -337,12 +344,93 @@ pub fn refresh_task_nodes() {
         let g = graph::get_mut();
         if let Some(node) = g.get_node_mut(task.graph_node_id) {
             let info = alloc::format!(
-                "state: {}\nstack: {} bytes",
+                "state: {}\nstack: {} bytes\npreemptions: {}",
                 task.state,
-                if task.id == 0 { 0 } else { TASK_STACK_SIZE }
+                if task.id == 0 { 0 } else { TASK_STACK_SIZE },
+                task.preempt_count
             );
             node.content = info.into_bytes();
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Preemptive yield — called from the timer interrupt handler
+// ---------------------------------------------------------------------------
+
+/// Bit 1 of `sstatus` — Supervisor Interrupt Enable.
+const SSTATUS_SIE: usize = 1 << 1;
+
+/// Called from the timer interrupt handler to preemptively switch tasks.
+/// Re-enables interrupts before switching so the next task can also be
+/// preempted. When we're switched back, disables interrupts again since
+/// we're still inside the trap handler (assembly will `sret`).
+pub fn preemptive_yield() {
+    let tasks = tasks_mut();
+    let n = tasks.len();
+    if n <= 1 {
+        return;
+    }
+
+    let current_idx = unsafe { CURRENT_TASK };
+
+    // Find the next ready task (round-robin)
+    let mut next_idx = None;
+    for i in 1..n {
+        let idx = (current_idx + i) % n;
+        if tasks[idx].state == TaskState::Ready {
+            next_idx = Some(idx);
+            break;
+        }
+    }
+
+    let next_idx = match next_idx {
+        Some(idx) => idx,
+        None => return, // No other ready tasks
+    };
+
+    // Increment preemption count for the current task
+    tasks[current_idx].preempt_count += 1;
+
+    // Update graph node for current task to show preemption
+    let cur_node_id = tasks[current_idx].graph_node_id;
+    let cur_preempt = tasks[current_idx].preempt_count;
+    let cur_id = tasks[current_idx].id;
+    let g = graph::get_mut();
+    if let Some(node) = g.get_node_mut(cur_node_id) {
+        let info = alloc::format!(
+            "state: preempted\nstack: {} bytes\npreemptions: {}",
+            if cur_id == 0 { 0 } else { TASK_STACK_SIZE },
+            cur_preempt
+        );
+        node.content = info.into_bytes();
+    }
+
+    // Update states
+    if tasks[current_idx].state == TaskState::Running {
+        tasks[current_idx].state = TaskState::Ready;
+    }
+    tasks[next_idx].state = TaskState::Running;
+
+    // Get raw pointers to contexts before the switch
+    let old_ctx = &mut tasks[current_idx].context as *mut TaskContext;
+    let new_ctx = &tasks[next_idx].context as *const TaskContext;
+
+    unsafe {
+        CURRENT_TASK = next_idx;
+
+        // Re-enable supervisor interrupts before switching so the next task
+        // can be preempted. We're about to switch away, so this is safe.
+        let sstatus = arch::read_sstatus();
+        arch::write_sstatus(sstatus | SSTATUS_SIE);
+
+        switch_context(old_ctx, new_ctx);
+
+        // We've been switched back to. We're still inside the trap handler
+        // path, so disable interrupts — the assembly `sret` will restore
+        // sstatus.SIE from sstatus.SPIE.
+        let sstatus = arch::read_sstatus();
+        arch::write_sstatus(sstatus & !SSTATUS_SIE);
     }
 }
 
@@ -370,4 +458,35 @@ pub fn demo_fibonacci() {
         b = next;
         yield_now();
     }
+}
+
+/// A busy-loop task that does NOT call yield_now(). It will only make
+/// progress when preempted by the timer interrupt. Proves preemptive
+/// multitasking is working.
+pub fn demo_busyloop() {
+    let mut counter: u64 = 0;
+    let mut last_print: u64 = 0;
+    loop {
+        counter = counter.wrapping_add(1);
+        // Print every ~10 million iterations (roughly every few preemptions)
+        if counter.wrapping_sub(last_print) >= 10_000_000 {
+            crate::println!(
+                "[busyloop] counter={} (preempted {} times)",
+                counter,
+                preempt_count_current()
+            );
+            last_print = counter;
+            // Stop after printing 10 times to not run forever
+            if counter >= 100_000_000 {
+                crate::println!("[busyloop] done!");
+                return;
+            }
+        }
+    }
+}
+
+/// Get the preemption count for the currently running task.
+pub fn preempt_count_current() -> usize {
+    let current_idx = unsafe { CURRENT_TASK };
+    tasks()[current_idx].preempt_count
 }

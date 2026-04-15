@@ -132,8 +132,8 @@ fn cmd_help() {
     crate::println!("  load          - load graph from disk");
     crate::println!("  disk          - show disk info");
     crate::println!("Task commands:");
-    crate::println!("  ps            - list all tasks");
-    crate::println!("  spawn <name>  - spawn a demo task (counter, fibonacci)");
+    crate::println!("  ps            - list all tasks with preemption stats");
+    crate::println!("  spawn <name>  - spawn a demo task (counter, fibonacci, busyloop)");
     crate::println!("  kill <id>     - kill a task by ID");
 }
 
@@ -699,23 +699,24 @@ fn cmd_status() {
 
 fn cmd_ps() {
     let tasks = crate::task::list();
-    crate::println!("{:>4}  {:<16} State", "ID", "Name");
-    for (id, name, state) in &tasks {
-        crate::println!("{:>4}  {:<16} {}", id, name, state);
+    crate::println!("{:>4}  {:<16} {:<10} Preemptions", "ID", "Name", "State");
+    for (id, name, state, preemptions) in &tasks {
+        crate::println!("{:>4}  {:<16} {:<10} {}", id, name, state, preemptions);
     }
 }
 
 fn cmd_spawn(name: &str) {
     if name.is_empty() {
         crate::println!("Usage: spawn <name>");
-        crate::println!("Available: counter, fibonacci");
+        crate::println!("Available: counter, fibonacci, busyloop");
         return;
     }
     let f: fn() = match name {
         "counter" => crate::task::demo_counter,
         "fibonacci" => crate::task::demo_fibonacci,
+        "busyloop" => crate::task::demo_busyloop,
         _ => {
-            crate::println!("Unknown task '{}'. Available: counter, fibonacci", name);
+            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop", name);
             return;
         }
     };

@@ -216,6 +216,10 @@ fn handle_timer_interrupt() {
     // Re-arm the timer for the next interval via stimecmp (Sstc extension)
     let next = arch::read_time() as u64 + TIMER_INTERVAL;
     arch::write_stimecmp(next);
+
+    // Preemptive multitasking: attempt to switch to the next ready task.
+    // This re-enables interrupts before switching and disables them on return.
+    crate::task::preemptive_yield();
 }
 
 // ---------------------------------------------------------------------------
