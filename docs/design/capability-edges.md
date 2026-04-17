@@ -103,9 +103,12 @@ dereferences the pointer directly. Out-of-range buffers → `-EINVAL`.
 ### Still planned
 
 - `APPEND_NODE` (gated on `write` edge)
-- `CREATE_NODE`, `ADD_EDGE` (gated by a "create"/"grant" cap — pending M31)
+- `CREATE_NODE`, `ADD_EDGE` (gated by a "create"/"grant" cap — target: M32+, same milestone as CDT)
 - `MAP_NODE` (map target into caller's address space for direct access,
-  avoiding syscall overhead)
+  avoiding syscall overhead). Also the intended replacement for
+  helios-std's fixed-size bump allocator from M31 — once a task can
+  request fresh zero pages at runtime, `alloc::*` can have a real
+  heap instead of 64 KiB carried in the binary image.
 
 ## Delegation and Revocation
 
@@ -117,7 +120,7 @@ The canonical solution is a **capability derivation tree (CDT)**: each derived e
 
 In graph terms: delegated edges get a `derived_from` back-link to the source edge. Revoke source → walk the derivation tree → remove descendants.
 
-CDT semantics are planned for a later milestone (M31+ probably). M29 ships without delegation — edges are kernel-declared-only.
+CDT semantics are planned for M32 (originally scheduled for M31 before that slot was redirected to shipping helios-std). M29–M31 ship without delegation — edges are kernel-declared-only.
 
 ## Boot-Time Capability Allocation
 
@@ -154,9 +157,10 @@ Plan 9's namespaces don't enforce; the file server does. Helios edges are enforc
 
 - **M29** (done): Skeleton — one U-mode task, MMU enforcement, 3 syscalls. Cap violation = task kill.
 - **M30** (done): Expanded syscall ABI — `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + the `traverse` cap kind. Four new user demos (`who`, `explorer`, `editor`, `naughty`) prove introspection + mutation + refusal all work end-to-end.
-- **M31**: Cap delegation + CDT for revocation.
-- **M32**: Multiple user tasks coexisting.
-- **M33**: Port DOOM to user mode (the litmus test — does the cap model handle a big, real program?).
+- **M31** (done): `helios-std` — the Rust-native userspace library. Typed syscall wrappers (`NodeId`, `Label`, `Errno`, `Edge`), `println!`, bump allocator, `_start`/panic-handler glue via `helios_entry!`. First linker-placed Rust U-mode binary (`hello-user`) runs end-to-end with the cap model: `Errno::Perm` propagates through `Result`, and a deliberate `read_node(root)` refusal is observably handled without killing the task. Kernel side: `build_user_address_space` now maps multi-page exec edges (R+W+X+U — W^X inside a task is waived until a follow-on edge-split; cross-task enforcement is unchanged).
+- **M32**: Cap delegation + CDT for revocation. (Bumped from M31 when M31 became "catch up to what rust-std.md promised".)
+- **M33**: Multiple user tasks coexisting.
+- **M34**: Port DOOM to user mode (the litmus test — does the cap model handle a big, real program?).
 
 ## M30 Implementation Notes
 
@@ -189,6 +193,53 @@ Things worth knowing for M31 and beyond:
    `ecall`, and PC-relative branches — no `la` or absolute references.
    The user stack at `0x401ff000` is the only writable scratch region.
 
+## M31 Implementation Notes
+
+Things the `helios-std` milestone learned, worth preserving:
+
+1. **Exec edges can span many pages.** `build_user_address_space` now
+   walks each `exec` edge's content in 4 KiB chunks (up to
+   `USER_CODE_MAX_PAGES = 64`) and lays them out at consecutive VAs
+   starting at `USER_CODE_BASE`. A real linker-placed Rust binary
+   (text + rodata + data + heap-arena) is one exec edge, one
+   contiguous image. The old one-page-per-edge assumption from M29/M30
+   still holds for the asm demos — they just use exactly one page.
+
+2. **Exec pages are R+W+X+U in M31.** A Rust binary's `.data` section
+   needs to be writable, and emitting two separate edges (one R+X for
+   text/rodata, one R+W for data/bss) would require the linker to
+   declare where the boundary lives. M31 punts: the whole image is
+   R+W+X at the task level. This waives W^X **inside** a task; it
+   does not waive cross-task capability enforcement (no edge → no
+   mapping → no access). A follow-up milestone can split the image
+   into `text` and `rwdata` edges once there's a reason for strict
+   W^X intra-task (e.g. JIT hardening).
+
+3. **The bump allocator lives inside the binary.** Because there's no
+   `SYS_MAP_NODE` / anonymous page grant yet, `helios-std`'s global
+   allocator is backed by a 64 KiB static `[u8; N]` in the binary
+   image itself. `static mut X: [u8; N] = [0; N]` would get placed in
+   `.bss`, which `objcopy -O binary` drops; an explicit non-zero
+   initializer (`[0xAA; N]`) forces it into `.data` so the kernel
+   actually copies the page bytes. See `crates/helios-std/src/heap.rs`.
+
+4. **Panic handler + `_start` via macro.** A Rust library cannot define
+   `#[panic_handler]`, so `helios-std` provides a `helios_entry!`
+   macro that the user binary invokes to emit `_start` + the panic
+   handler at the binary's crate root. The `_start` stashes kernel-
+   passed `a0`/`a1` into atomic globals so `helios_std::task::args()`
+   can retrieve them later (a stand-in for real `argv`/`env` pending
+   a graph-native spawn-context scheme).
+
+5. **Cap enforcement works through `Result`.** `hello-user` calls
+   `read_node(NodeId(1))` — the kernel root, which it has no `read`
+   edge to. The kernel logs the violation and returns `-EPERM`,
+   `helios_std::graph::read_node` converts it to `Err(Errno::Perm)`,
+   and the demo matches on that path. Importantly the task **is not
+   killed**; M29's fault-kill path only triggers on MMU violations
+   (direct load/store to an unmapped VA), not on syscall `-EPERM`
+   returns. This is what lets graceful "ask forgiveness" patterns work.
+
 ---
 
-*Last reviewed: 2026-04-16 (post-M30 ABI expansion). Next review after M31 CDT work.*
+*Last reviewed: 2026-04-17 (post-M31 helios-std). Next review after M32 CDT/delegation.*

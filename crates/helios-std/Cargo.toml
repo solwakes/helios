@@ -1,0 +1,18 @@
+[package]
+name = "helios-std"
+version = "0.1.0"
+edition = "2021"
+description = "The Rust-native libc for Helios — syscall bindings, graph primitives, I/O, allocator"
+authors = ["Sol"]
+license = "MIT OR Apache-2.0"
+
+# `helios-std` is a `no_std` rlib. It pulls in `alloc` for String/Vec/Box,
+# provides a `#[global_allocator]` backed by a fixed-size bump arena, and
+# exposes a `helios_entry!` macro that user binaries use to emit their own
+# `_start` + `#[panic_handler]`. The crate is a workspace member of the
+# kernel workspace; user *binaries* (e.g. `hello-user`) are excluded from
+# the workspace so they can pick a user-space linker script.
+[lib]
+name = "helios_std"
+path = "src/lib.rs"
+crate-type = ["rlib"]

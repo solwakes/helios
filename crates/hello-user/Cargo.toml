@@ -1,0 +1,13 @@
+[package]
+name = "hello-user"
+version = "0.1.0"
+edition = "2021"
+description = "The first Rust-native Helios user-mode program (M31)"
+build = "build.rs"
+
+[[bin]]
+name = "hello-user"
+path = "src/main.rs"
+
+[dependencies]
+helios-std = { path = "../helios-std" }

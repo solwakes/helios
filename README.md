@@ -37,6 +37,9 @@ see [`docs/`](docs/) for design rationale and architecture notes:
 - **persistent storage** — graph serialized to virtio-blk disk, auto-loaded on boot
 - **proper memory management** — linked-list allocator with coalescing
 - **DOOM** — yes, it runs Doom (cross-compiled C engine, embedded shareware WAD, 2× scaled rendering)
+- **TCP/IP stack + HTTP server** — graph is queryable as JSON over the network (M24–M28)
+- **U-mode user tasks with capability-edge security** — graph edges *are* the capability space, MMU-enforced (M29–M30)
+- **helios-std** — Rust-native userspace library with raw syscall wrappers, typed graph primitives, `println!`, and a bump allocator; first native Rust binary runs as `spawn hello` (M31)
 
 ## building
 
@@ -260,6 +263,16 @@ the graph is the filesystem, the process table, the device tree, and the IPC mec
 | M19 | VirtIO keyboard input | `30383d2` |
 | M20 | shell scripting | `f68c37f` |
 | M21 | DOOM | `9849084` |
+| M22 | framebuffer u64 optimization | — |
+| M23 | window manager | `a5c2987` |
+| M24 | virtio-net + ARP + ICMP (ping works) | `c60aff5` |
+| M25 | TCP/IP stack + socket API | `44a3147` |
+| M26 | HTTP server (graph as JSON) | `1a97184` |
+| M27 | write endpoints (graph mutable over HTTP) | `4f96f74` |
+| M28 | HTML dashboard | `08ef974` |
+| M29 | user space with capability-edge security (MMU-enforced) | `1b39c24` |
+| M30 | expanded syscall ABI (write, list_edges, follow_edge, self) | `10fcf5e` |
+| M31 | helios-std — Rust-native userspace library + hello user program | — |
 
 ## license
 

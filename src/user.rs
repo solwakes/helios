@@ -48,7 +48,12 @@ pub const USER_STACK_BASE: usize = 0x401F_F000;
 pub const USER_STACK_TOP: usize = 0x4020_0000;
 
 /// How many VA pages we reserve per category (sanity bound).
-const USER_CODE_MAX_PAGES: usize = 16;
+///
+/// Code pages occupy L0 indices 0..USER_CODE_MAX_PAGES; data pages start
+/// at L0 index 256 (derived from USER_DATA_BASE). Code and data must not
+/// collide, so USER_CODE_MAX_PAGES < 256. 64 pages (256 KiB) is enough
+/// for native Rust programs (M31); the asm demos use just 1.
+const USER_CODE_MAX_PAGES: usize = 64;
 const USER_DATA_MAX_PAGES: usize = 16;
 
 // ---------------------------------------------------------------------------
@@ -232,6 +237,31 @@ pub fn naughty_program_bytes() -> &'static [u8] {
         let e = &_user_naughty_end as *const u8;
         core::slice::from_raw_parts(s, e.offset_from(s) as usize)
     }
+}
+
+// ---------------------------------------------------------------------------
+// M31: `hello-user` — the first linker-placed Rust binary running in U-mode.
+//
+// The bytes come from `crates/hello-user/src/main.rs` (linking against
+// helios-std), compiled by `build.rs` into a raw `-O binary` blob and
+// included at compile time. See `docs/userspace/rust-std.md` for the
+// design, `crates/hello-user/linker.ld` for the layout, and
+// `docs/design/capability-edges.md` for the syscall ABI this program
+// consumes.
+//
+// The blob is bigger than one page (program + 64 KiB bump heap ≈ 70 KiB),
+// so the kernel's multi-page exec-edge mapping is what makes this work;
+// see `build_user_address_space` above.
+// ---------------------------------------------------------------------------
+
+static HELLO_USER_BIN: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/user-bins/hello-user.bin",
+));
+
+/// Raw bytes of the `hello-user` Rust user program.
+pub fn hello_program_bytes() -> &'static [u8] {
+    HELLO_USER_BIN
 }
 
 // The bad-demo blob: loads from an unmapped VA so the MMU (not the
@@ -928,9 +958,14 @@ extern "C" {
 ///   the kernel can service traps even while this user's satp is active.
 /// - Walks the task's outgoing edges. For each `exec`/`read`/`write`
 ///   edge, copies the target node's content into fresh 4 KiB frames and
-///   maps them at USER_CODE_BASE / USER_DATA_BASE with R/X or R(/W) plus
-///   the PTE_U bit.
+///   maps them at USER_CODE_BASE / USER_DATA_BASE with R+W+X (exec) /
+///   R (read) / R+W (write), all with PTE_U.
 /// - Allocates a fresh stack frame at USER_STACK_BASE (R/W/U).
+///
+/// Exec edges span as many consecutive pages as the content needs (up
+/// to USER_CODE_MAX_PAGES), so a real linker-placed Rust binary sees
+/// one contiguous image at USER_CODE_BASE. See the exec-mapping loop
+/// for the W^X trade-off that M31 accepts.
 ///
 /// Returns the user address space.
 fn build_user_address_space(task_node_id: u64) -> Result<UserAddressSpace, &'static str> {
@@ -976,33 +1011,58 @@ fn build_user_address_space(task_node_id: u64) -> Result<UserAddressSpace, &'sta
     let mut mappings: Vec<Mapping> = Vec::new();
 
     // --- Map exec edges starting at USER_CODE_BASE. --------------------
+    //
+    // Each exec edge maps as many 4 KiB pages as its content needs
+    // (ceil(len/4096), minimum 1). Pages are consecutive in user VA, so
+    // a real linker-placed binary (e.g. `hello-user`) sees one
+    // contiguous image at USER_CODE_BASE. Asm demos with ≤ 4 KiB content
+    // just get a single page and look the same as before.
+    //
+    // Flags are R+W+X+U for M31: a linker-placed binary needs .data
+    // writable, and emitting two separate edges (one R+X for .text /
+    // .rodata, one R+W for .data / .bss) would require the linker to
+    // know exactly where the split lives. We give up strict W^X at the
+    // task level until a later milestone splits images into `text` and
+    // `rwdata` edges; capability enforcement across *tasks* is
+    // unaffected (no edge → no mapping → no access).
     let mut code_slot = 0usize;
     let mut entry: Option<usize> = None;
-    for (i, &tgt_id) in exec_targets.iter().enumerate() {
-        if i >= USER_CODE_MAX_PAGES { break; }
+    'outer: for &tgt_id in exec_targets.iter() {
         let tgt = match g.get_node(tgt_id) {
             Some(n) => n,
             None => continue,
         };
-        let frame_pa = alloc_user_frame();
         let content = &tgt.content;
-        let copy_len = core::cmp::min(content.len(), 4096);
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                content.as_ptr(),
-                frame_pa as *mut u8,
-                copy_len,
+        let n_pages = core::cmp::max(1, (content.len() + 4095) / 4096);
+        for page_i in 0..n_pages {
+            if code_slot >= USER_CODE_MAX_PAGES {
+                break 'outer;
+            }
+            let frame_pa = alloc_user_frame();
+            let off = page_i * 4096;
+            let copy_len = core::cmp::min(
+                content.len().saturating_sub(off),
+                4096,
             );
+            if copy_len > 0 {
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        content.as_ptr().add(off),
+                        frame_pa as *mut u8,
+                        copy_len,
+                    );
+                }
+            }
+            let flags = PTE_R | PTE_W | PTE_X | PTE_U;
+            l0.entries[code_slot] =
+                PageTableEntry::leaf((frame_pa >> 12) as u64, flags);
+            let va = USER_CODE_BASE + code_slot * 4096;
+            mappings.push(Mapping { node_id: tgt_id, va, pa: frame_pa, kind: "exec" });
+            if entry.is_none() {
+                entry = Some(va);
+            }
+            code_slot += 1;
         }
-        // R + X + U flags. No W — code pages are truly execute-only-ish.
-        let flags = PTE_R | PTE_X | PTE_U;
-        l0.entries[code_slot] = PageTableEntry::leaf((frame_pa >> 12) as u64, flags);
-        let va = USER_CODE_BASE + code_slot * 4096;
-        mappings.push(Mapping { node_id: tgt_id, va, pa: frame_pa, kind: "exec" });
-        if entry.is_none() {
-            entry = Some(va);
-        }
-        code_slot += 1;
     }
 
     // --- Map read edges starting at USER_DATA_BASE. --------------------
@@ -1821,6 +1881,8 @@ static mut EXPLORER_CODE_ID: u64 = 0;
 static mut EDITOR_CODE_ID: u64 = 0;
 static mut NAUGHTY_CODE_ID: u64 = 0;
 static mut SCRATCH_ID: u64 = 0;
+/// M31: node id of the `hello` Rust-native user program.
+static mut HELLO_CODE_ID: u64 = 0;
 
 /// Initialize the demo user-space nodes: a Binary code node for each
 /// demo + a Text node the M29 demo reads + the scratch node the M30
@@ -1880,6 +1942,14 @@ pub fn init() {
     }
     g.add_edge(1, "child", scratch_id);
 
+    // M31: Rust-native hello-world linked against helios-std.
+    let hello_bytes = hello_program_bytes();
+    let hello_id = g.create_node(NodeType::Binary, "hello-user-code");
+    if let Some(n) = g.get_node_mut(hello_id) {
+        n.content = hello_bytes.to_vec();
+    }
+    g.add_edge(1, "child", hello_id);
+
     unsafe {
         DEMO_CODE_ID = code_id;
         BADDEMO_CODE_ID = bad_id;
@@ -1889,6 +1959,7 @@ pub fn init() {
         EDITOR_CODE_ID = ed_id;
         NAUGHTY_CODE_ID = nau_id;
         SCRATCH_ID = scratch_id;
+        HELLO_CODE_ID = hello_id;
     }
     crate::println!(
         "[user] demo nodes ready: demo=#{} ({}B) bad=#{} ({}B) text=#{}",
@@ -1898,6 +1969,10 @@ pub fn init() {
         "[user] M30 demos: who=#{} ({}B) explorer=#{} ({}B) editor=#{} ({}B) naughty=#{} ({}B) scratch=#{}",
         who_id, who_bytes.len(), exp_id, explorer_bytes.len(),
         ed_id, editor_bytes.len(), nau_id, naughty_bytes.len(), scratch_id,
+    );
+    crate::println!(
+        "[user] M31 native Rust: hello=#{} ({} B)",
+        hello_id, hello_bytes.len(),
     );
 }
 
@@ -1917,3 +1992,6 @@ pub fn editor_code_id() -> u64 { unsafe { EDITOR_CODE_ID } }
 pub fn naughty_code_id() -> u64 { unsafe { NAUGHTY_CODE_ID } }
 #[allow(static_mut_refs)]
 pub fn scratch_id() -> u64 { unsafe { SCRATCH_ID } }
+/// Node id of the compiled `hello-user` Rust binary (M31).
+#[allow(static_mut_refs)]
+pub fn hello_code_id() -> u64 { unsafe { HELLO_CODE_ID } }

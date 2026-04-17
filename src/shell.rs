@@ -528,7 +528,8 @@ fn cmd_help() {
     crate::println!("  ps            - list all tasks with preemption stats");
     crate::println!("  spawn <name>  - spawn a demo task (counter, fibonacci, busyloop,");
     crate::println!("                  producer, consumer, pingpong, userdemo, baddemo,");
-    crate::println!("                  who, explorer, editor, naughty [M30])");
+    crate::println!("                  who, explorer, editor, naughty [M30],");
+    crate::println!("                  hello [M31 — native Rust on helios-std])");
     crate::println!("  spawn <id>    - spawn a USER-MODE task from a code node (M29)");
     crate::println!("  kill <id>     - kill a task by ID");
     crate::println!("IPC commands:");
@@ -1306,6 +1307,7 @@ fn cmd_spawn(name: &str) {
         crate::println!("                spawn explorer  (M30: SYS_LIST_EDGES on self)");
         crate::println!("                spawn editor    (M30: SYS_WRITE_NODE on scratch)");
         crate::println!("                spawn naughty   (M30: SYS_WRITE_NODE -> EPERM)");
+        crate::println!("                spawn hello     (M31: native Rust on helios-std)");
         return;
     }
     // Shortcut: "spawn userdemo" launches the boot-time demo code node.
@@ -1390,6 +1392,27 @@ fn cmd_spawn(name: &str) {
         crate::println!("user task returned {}", rc);
         return;
     }
+    // M31: spawn the native Rust hello program built against helios-std.
+    //
+    // Each spawn creates a fresh task node with:
+    //   - `exec` edge to the compiled hello-user code binary
+    //   - `traverse` edge back to itself, so `helios_std::graph::list_edges(me)` works
+    // and drops to U-mode at 0x4000_0000 (the first byte of the binary,
+    // which is the `_start` shim the `helios_entry!` macro expands to).
+    if name == "hello" || name == "hello-user" || name == "rustdemo" {
+        let code_id = crate::user::hello_code_id();
+        if code_id == 0 {
+            crate::println!("hello-user-code not initialized");
+            return;
+        }
+        crate::println!(
+            "helios> spawning M31 'hello' — native Rust on helios-std (code #{})",
+            code_id,
+        );
+        let rc = crate::user::run_user_task_with_caps(code_id, &[], true, 0, 0);
+        crate::println!("user task returned {}", rc);
+        return;
+    }
     // Numeric argument -> treat as a code node id and launch as user task.
     if let Some(id) = parse_usize(name) {
         let code_id = id as u64;
@@ -1415,7 +1438,7 @@ fn cmd_spawn(name: &str) {
         "producer" => crate::task::demo_producer,
         "consumer" => crate::task::demo_consumer,
         _ => {
-            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, or a numeric code node id", name);
+            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), or a numeric code node id", name);
             return;
         }
     };

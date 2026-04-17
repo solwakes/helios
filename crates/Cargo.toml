@@ -1,0 +1,36 @@
+# Userspace workspace for Helios.
+#
+# Separate from the kernel's top-level Cargo.toml so the userspace crates
+# can use their own linker scripts, target-specific flags, and stack/VA
+# layout without colliding with the kernel build. The kernel's build.rs
+# shells out to this workspace to compile user programs and embed the
+# resulting raw binaries via `include_bytes!`.
+#
+# Members:
+#   - helios-std : the Rust-native libc for Helios user-mode (M31).
+#   - hello-user : the "hello from Rust userspace" user program (M31).
+
+[workspace]
+resolver = "2"
+members = [
+    "helios-std",
+    "hello-user",
+]
+
+[profile.release]
+# `opt-level = "z"` + LTO keeps the user binary small — a few tens of
+# KB for the hello program — which matters because the kernel copies
+# it into per-task pages at spawn time.
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = true
+# No overflow checks in release: the arithmetic in our code (bump
+# allocator, number formatting) is bounded and panics would pull in
+# more code weight than we can afford.
+overflow-checks = false
+
+[profile.dev]
+panic = "abort"

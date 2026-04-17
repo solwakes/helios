@@ -1,0 +1,13 @@
+# Cargo config for the userspace sub-workspace.
+#
+# Deliberately separate from the kernel's root `.cargo/config.toml` so
+# the kernel's linker script doesn't leak into user binaries. User
+# binaries provide their own linker script via a per-crate `build.rs`
+# (see `hello/build.rs`), so we only set target + build-std here.
+
+[build]
+target = "riscv64gc-unknown-none-elf"
+
+[unstable]
+build-std = ["core", "compiler_builtins", "alloc"]
+build-std-features = ["compiler-builtins-mem"]

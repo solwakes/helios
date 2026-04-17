@@ -1,4 +1,7 @@
 /target
+/crates/target
+crates/**/target
 helios.img
 helios.img.bak
 helios-fresh.img
+

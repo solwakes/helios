@@ -1,6 +1,6 @@
 # Rust on Helios: `std`, Targets, and the Porting Path
 
-*Status: Design sketch. Updated when the first Rust app ships.*
+*Status: Strategy A (`helios-std`) shipped in M31. Strategies B and C remain future work. Updated 2026-04-17.*
 
 Rust's `core` + `alloc` are OS-independent and port to Helios freely. `std` is the problem: it bakes in POSIX metaphors throughout. This document maps the path from "Rust programs don't run on Helios" to "Rust is a first-class language for Helios software."
 
@@ -22,20 +22,23 @@ Rust's `core` + `alloc` are OS-independent and port to Helios freely. `std` is t
 
 ## Three Strategies
 
-### Strategy A: `helios-std` — The Rust-Native "libc" (Primary Target)
+### Strategy A: `helios-std` — The Rust-Native "libc" (**Shipped in M31**)
 
-Ship a Helios-native stdlib, `helios-std`, positioned explicitly as **what you link against instead of libc when targeting Helios**. It is not a `std`-alike; it is the Rust-native equivalent of libc without POSIX baggage.
+`helios-std` is a Helios-native stdlib, positioned explicitly as **what you link against instead of libc when targeting Helios**. It is not a `std`-alike; it is the Rust-native equivalent of libc without POSIX baggage.
 
 Every Helios-native Rust program links `helios-std` as its primary dependency. This is the **default target** for new Helios software. Other strategies exist for compatibility, but helios-std is what you reach for first.
 
-What it provides:
-- **Syscall bindings** — raw and typed wrappers for `SYS_READ_NODE`, `SYS_WRITE_NODE`, `SYS_LIST_EDGES`, `SYS_FOLLOW_EDGE`, etc.
-- **Graph primitives** — `Node`, `Edge`, `NodeId`, `Cap` types mapping directly to kernel concepts
-- **Capability helpers** — check/request/delegate caps, walk one's own outgoing edges
-- **I/O** — node-content streams (not file streams), UART/framebuffer access where capped, TCP sockets (mapping the kernel's socket API)
-- **Allocator** — global allocator that requests pages from the kernel via `SYS_MAP_NODE` (or similar)
-- **Entry/exit** — `#[no_mangle] extern "C" fn _start()`, panic handler, exit code marshalling
-- **Core re-exports** — `alloc::String`, `alloc::Vec`, etc. (no `std::` anything)
+**Shipped in M31** (see `crates/helios-std/`):
+
+- **Raw syscall bindings** (`helios_std::sys`) — `syscall0/1/2/3` + per-syscall wrappers for the M30 ABI (`SYS_READ_NODE`, `SYS_WRITE_NODE`, `SYS_LIST_EDGES`, `SYS_FOLLOW_EDGE`, `SYS_SELF`, `SYS_PRINT`, `SYS_EXIT`).
+- **Typed graph primitives** (`helios_std::graph`) — `NodeId` newtype, `Label` enum (`Read`/`Write`/`Exec`/`Traverse`/`Unknown(u8)`; aliased as `LabelKind` to match the doc vocabulary), `EdgeInfo` struct (aliased as `Edge`), `Errno` (`Perm`/`NotFound`/`Invalid`/`Other`). Wrappers: `read_node`, `write_node`, `list_edges` (returns `Vec<Edge>`), `list_edges_into` (zero-alloc variant), `follow_edge` — all returning `Result<_, Errno>`.
+- **I/O** (`helios_std::io`) — `print` / `println` byte-oriented helpers + `Stdout` implementing `core::fmt::Write`; plus `#[macro_export] macro_rules! println` so user code gets the familiar syntax. Output goes through `SYS_PRINT` (UART today, framebuffer/net later when capped).
+- **Task primitives** (`helios_std::task`) — `self_id()` (via `SYS_SELF`), `exit(code)` (via `SYS_EXIT`), `args()` returning the two `usize` values the kernel passed at entry (M31 stand-in for proper `argv`/`env`).
+- **Global allocator** (`helios_std::heap`) — a 64 KiB bump allocator backing `alloc::String` / `alloc::Vec` / `alloc::format!`. The arena lives *inside the binary image* (in `.data.helios_heap`), because the kernel currently maps exec edges as R+W+X and no `SYS_MAP_NODE`-style page-granting syscall exists yet. No free; lifetime is the task.
+- **Runtime glue** — the `helios_entry!` macro expands to `_start` (placed in `.text.entry` via linker script so it lands at `0x4000_0000`) which stashes the kernel-passed `a0`/`a1`, calls `main()`, and `SYS_EXIT(0)` on return. Also emits a `#[panic_handler]` that prints the panic message and `SYS_EXIT(1)`.
+- **Prelude** (`helios_std::prelude`) — one-stop glob import: `NodeId`, `Edge`, `EdgeInfo`, `Label`, `LabelKind`, `Errno`, `self_id`, `exit`, `read_node`, `write_node`, `list_edges`, `follow_edge`, `print`, `println`, plus `alloc::{Box, String, Vec, format, vec}`.
+
+First consumer: `crates/hello-user/` (`spawn hello` in the shell), a ~72 KiB native-Rust user binary that prints, self-introspects via `list_edges`, deliberately trips `Errno::Perm` on an unauthorised `read_node`, and shows the heap high-water mark — proving every piece of the stack lights up end-to-end.
 
 What it does NOT provide:
 - POSIX file descriptors (use node IDs)
@@ -55,6 +58,20 @@ Pros:
 Cons:
 - Crates that use `std::fs` / `std::process` / `std::net` can't be consumed as-is (bridge via Strategy B or C if needed)
 - Unfamiliar to Rust developers who expect `std`
+
+#### M31 caveats — stopgaps that follow-on milestones will lift
+
+- **Bump allocator inside the binary.** Until a `SYS_MAP_NODE`-style syscall exists, the heap lives in the user image's `.data` section. That means (a) 64 KiB arena cap, (b) no free, (c) a long-lived task eventually exhausts its heap. First follow-on: add a `SYS_MAP_NODE` that grants a zeroed page under a newly-created `write` edge, and swap the bump allocator for a real free-list.
+- **W^X waived at the task level.** The kernel currently maps exec edges as R+W+X+U because the Rust binary's `.data` lives in the same image as its `.text`. Cross-task caps remain strictly MMU-enforced (no edge → no mapping). A future "split image" approach — one `text` edge for `.text`/`.rodata`, one `rwdata` edge for `.data`/`.bss` — can restore W^X without asking the linker to know the boundary.
+- **No argv / no env.** Tasks receive two `usize` registers (`a0`, `a1`) at entry — accessible via `helios_std::task::args()`. A graph-native "spawn context" (a node whose edges describe what the task should operate on) is the right long-term answer; M31 ships the minimal stand-in.
+- **`list_edges` ceiling of 256 entries per call.** The kernel has no offset/continuation argument yet, so a node with more edges is silently truncated. A paged variant is tracked with the `SYS_MAP_NODE` work.
+- **Static TLS, signals, threads: not there.** U-mode is still single-hart, single-task. No thread API in helios-std yet.
+
+#### Cargo ergonomics (what actually lands on disk)
+
+The kernel and userspace live in separate Cargo workspaces. Root `Cargo.toml` keeps only the kernel crate; `crates/Cargo.toml` is a sub-workspace with `helios-std` (rlib) and `hello-user` (bin). The split exists because user binaries use a different linker script (`crates/hello-user/linker.ld`, origin `0x4000_0000`) than the kernel (`src/arch/riscv64/linker.ld`, origin `0x8020_0000`) — and Cargo's `target.<triple>.rustflags` are *concatenated* across the cwd-to-$HOME config walk, not replaced, so a per-workspace isolation is the only clean way to keep those linker scripts from cross-contaminating. The kernel's own link args are emitted from `build.rs` via `cargo:rustc-link-arg=` for the same reason.
+
+Build pipeline: `cargo build --release` at the repo root runs kernel `build.rs`, which shells out to `cargo build --release -p hello-user` in `crates/`, then `riscv64-elf-objcopy -O binary` on the resulting ELF, then `include_bytes!` pulls the raw blob into the kernel at compile time. `spawn hello` creates a fresh task node, adds an `exec` edge to the hello-user code node plus a `traverse` self-edge, drops to U-mode, and collects the exit code.
 
 ### Strategy B: `riscv64-helios` Rust Target
 
@@ -111,18 +128,19 @@ A mature Helios Rust ecosystem has all three, with a clear primary:
 
 Libraries bridge: the `helios` core crate exposes `Node`, `Edge`, `NodeId`, `Cap` types, usable from any of the three strategies — so even a Strategy B or C program can reach for graph-native primitives when it wants them.
 
-## `helios-std` First
+## `helios-std` First — Where We Are
 
-For M29-M32, focus on Strategy A. Reasons:
+Strategy A is the priority, and M31 shipped its first cut. Reasons the order was right:
 
-1. We need concrete examples of native Rust-on-Helios to validate the syscall ABI. Something has to go first.
+1. We needed concrete examples of native Rust-on-Helios to validate the syscall ABI. Something had to go first.
 2. Building a Rust target (Strategy B) without a mature syscall ABI is speculative — the target will change as the ABI settles. Better to let it settle against real programs first.
 3. The POSIX shim (Strategy C) depends on `helios-libc` which depends on the syscall ABI, which depends on the experiences from Strategy A.
 
-Order:
-- **M29-M30:** Syscall ABI, `helios-std` crate, `ls`/`cat` written against it.
-- **M31-M32:** Additional native tools; `helios-libc` crate (as a Rust project — the POSIX shim starts as a Rust library).
-- **M33+:** `riscv64-helios` rustc target built on top of the stable ABI. POSIX shim hardened to support real legacy programs.
+Revised order:
+- **M29–M30 (done):** Syscall ABI — `READ_NODE`, `PRINT`, `EXIT`, then `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + `traverse` cap kind.
+- **M31 (done):** `helios-std` crate as described above; `hello-user` as the first native binary.
+- **M32 (next):** Graph-native toolkit in native Rust — `ls`, `cat`, `tree`, maybe `grep`. These double as litmus tests for helios-std's ergonomics; anywhere it feels awkward, fix the library rather than reaching for string manipulation.
+- **M33+:** A `SYS_MAP_NODE`-style page-grant syscall (lets `helios-std` request fresh R/W pages instead of living inside its binary image), followed by a real heap allocator. Then cap delegation + CDT for revocation. Then `helios-libc` as a Rust library, `riscv64-helios` rustc target, and POSIX shim hardened enough for DOOM-in-U-mode.
 
 ## Cargo Considerations
 
@@ -153,47 +171,73 @@ Each is screened against the AI-OK filter before vendoring.
 
 ## What a First Native Rust App Looks Like
 
-```rust
-// crates.io-style Cargo.toml
-// [dependencies]
-// helios-std = "0.1"
+This is the shape of `crates/hello-user/src/main.rs` as shipped in M31
+— a lightly trimmed excerpt of the real source:
 
+```rust
 #![no_std]
 #![no_main]
+
 extern crate alloc;
 
-use helios_std::graph::{self, Node, NodeId};
-use helios_std::caps;
-use alloc::string::String;
+use helios_std::prelude::*;
 
-#[no_mangle]
-pub extern "C" fn _start() -> ! {
-    // Get a handle to our own task node.
-    let me = helios_std::task::current();
+helios_std::helios_entry!(main);
 
-    // Walk our outgoing edges and print what we can see.
-    for edge in graph::edges_of(me) {
-        let target = edge.target();
-        let Ok(node) = graph::read_node(target) else {
-            continue; // no read cap to follow this one
-        };
-        helios_std::io::println(&String::from_utf8_lossy(node.content()));
+fn main() {
+    helios_std::println!("hello from rust userspace!");
+
+    let me = self_id();
+    helios_std::println!("my id is {}", me);
+
+    match list_edges(me) {
+        Ok(edges) => {
+            helios_std::println!("my {} outgoing edge(s):", edges.len());
+            for e in &edges {
+                helios_std::println!("  -> {} [{}]", e.target, e.label);
+            }
+        }
+        Err(e) => helios_std::println!("list_edges failed: {}", e),
     }
 
-    helios_std::task::exit(0);
+    // Deliberate cap violation — prove Errno::Perm propagates through
+    // Result rather than panicking. We have no `read` edge to node #1.
+    let mut scratch = [0u8; 16];
+    match read_node(NodeId(1), &mut scratch) {
+        Err(Errno::Perm) => helios_std::println!("read_node(#1) refused — caps work."),
+        other            => helios_std::println!("unexpected: {:?}", other),
+    }
 }
 ```
 
-Shape: `#![no_std]`, uses `alloc`, imports `helios-std`, writes directly to graph primitives. No POSIX leak anywhere. Minimal dependencies.
+and its `Cargo.toml`:
+
+```toml
+[package]
+name = "hello-user"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+helios-std = { path = "../helios-std" }
+```
+
+Shape notes: `#![no_std] #![no_main]`, pulls in `alloc`, imports
+`helios-std`, talks to the graph directly. No POSIX leak. The
+`helios_entry!` macro emits `_start` and the `#[panic_handler]` so
+user code never has to write either; `prelude::*` brings in
+`Vec`/`String`/`Box`/`format!` alongside `NodeId`/`Errno`/`Label`.
+About 70 KB on disk, most of which is the bump-heap arena.
 
 ## Summary
 
 - `core` + `alloc` port freely. `std` is where the work is.
-- Strategy A (parallel `helios-std`): fast path for native software. First priority.
+- Strategy A (`helios-std`): **shipped in M31**. Fast path for native software. First priority, first milestone.
 - Strategy B (Rust target): enables portable code + graph-native APIs. Heavy engineering, do after ABI settles.
 - Strategy C (POSIX shim as libc): cheap compatibility. Last resort for legacy binaries, not the default.
 - All three should coexist in the mature ecosystem. Native first, then the compatibility ramp.
 
 ---
 
-*Last reviewed: 2026-04-16 (M28 pre-impl sketch).*
+*Last reviewed: 2026-04-17 (post-M31 helios-std landing). Revisit after M32 (graph-native tools) and again once `SYS_MAP_NODE` lets the bump allocator leave the binary image.*

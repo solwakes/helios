@@ -21,7 +21,7 @@ If a proposed change violates any of these, either refactor the approach or open
 
 ```
 helios/
-├── src/
+├── src/                      ← kernel (no_std, riscv64gc)
 │   ├── main.rs               ← kmain entry
 │   ├── arch/riscv64/         ← boot.S, linker.ld, traps, privilege
 │   ├── mm/                   ← page tables, allocator, Sv39 setup
@@ -32,13 +32,17 @@ helios/
 │   ├── navigator.rs          ← framebuffer graph navigator
 │   ├── fb/                   ← framebuffer primitives, font, console
 │   ├── task.rs / sched.rs    ← task model (nodes) + scheduler
-│   └── user.rs               ← (M29+) user-mode task setup, syscall dispatch
+│   └── user.rs               ← (M29+) user-mode task setup, syscall dispatch, embedded user binaries
+├── crates/                   ← (M31+) userspace sub-workspace
+│   ├── Cargo.toml            ← sub-workspace manifest (excluded from kernel workspace)
+│   ├── helios-std/           ← Rust-native "libc" — syscalls, graph types, print, allocator
+│   └── hello-user/           ← first native Rust user program (spawn hello)
 ├── docs/                     ← design rationale, kernel docs, userspace
 ├── doom/, doomgeneric/       ← DOOM port (C, linked via FFI)
-├── screenshots/              ← milestone screenshots
+├── screenshots/              ← milestone screenshots + UART transcripts
 ├── Cargo.toml / .lock
 ├── rust-toolchain.toml       ← pinned nightly
-├── build.rs                  ← builds doomgeneric
+├── build.rs                  ← builds doomgeneric + userspace via nested cargo
 ├── Makefile                  ← run, run-gui, clean
 └── README.md                 ← user-facing intro
 ```
@@ -115,13 +119,14 @@ Close-after-response, no keep-alive, 4KB request cap, 64KB response cap. Body-re
 
 Single-threaded, polling, `static mut` state. Socket table is 16 slots, listener table is 8 slots. Don't hold references across `tcp::*` calls (the kernel pattern is `drop(s)` before any call that might re-enter SOCKETS).
 
-## Milestone Status (M1–M28 Complete)
+## Milestone Status (M1–M31 Complete)
 
 See `README.md` for the user-facing list. Current front lines:
 
 - **M29 (done):** First U-mode task, MMU cap enforcement, 3 syscalls (`READ_NODE`, `PRINT`, `EXIT`). Pivot to privilege-separation via graph-edge capabilities.
 - **M30 (done):** Expanded syscall ABI — `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + the `traverse` capability kind. Four new demos (`who`, `explorer`, `editor`, `naughty`) prove introspection + mutation + write-cap refusal.
-- **M31+ planned:** Cap delegation with CDT, multiple coexisting user tasks, port DOOM to user mode as the litmus test.
+- **M31 (done):** `helios-std` — the Rust-native "libc" for Helios user-mode. Raw syscall wrappers (`sys`), typed graph primitives (`NodeId`, `Label`/`LabelKind`, `Edge`/`EdgeInfo`, `Errno`), `print!`/`println!` macros over `SYS_PRINT`, `self_id`/`exit`, a 64 KiB bump allocator for `alloc::*`, and the `helios_entry!` macro that generates `_start` + a panic handler. First native Rust U-mode program lives at `crates/hello-user/`; `spawn hello` runs it. Kernel side: `build.rs` compiles the userspace sub-workspace and embeds the raw binary via `include_bytes!`. Exec edges are now R+W+X (see design notes below) and can span multiple consecutive 4 KiB pages (`USER_CODE_MAX_PAGES = 64`), so real linker-placed Rust binaries sit as one contiguous image at `0x4000_0000`.
+- **M32+ planned:** More native Rust user programs (`ls`/`cat`/`tree`), cap delegation with a capability-derivation tree, multiple coexisting user tasks, `SYS_MAP_NODE` (so the bump allocator can request fresh pages instead of living inside the binary image), port DOOM to user mode as the litmus test.
 
 ## Common Gotchas
 
@@ -134,6 +139,8 @@ See `README.md` for the user-facing list. Current front lines:
 7. **Missing `fence.i` after mapping executable pages**: when you map new code into a task's page table (M29+), the CPU's icache may hold stale entries. Always `fence.i` after installing executable pages.
 8. **Missing `sfence.vma` after SATP change**: required on RISC-V to flush TLB.
 9. **Missing `sstatus.SUM = 1` in syscall handlers**: S-mode can't access U-mode memory by default. Set SUM before any copy-to-/from-user.
+10. **Nested cargo + rustflags leakage (M31)**: `target.<triple>.rustflags` in `.cargo/config.toml` is **concatenated** across every config file on the cwd-to-$HOME walk, not replaced. Putting the kernel's `-T<linker.ld>` in the root `.cargo/config.toml` leaked into the `crates/` sub-workspace. The fix: emit kernel link args from `build.rs` via `cargo:rustc-link-arg=` (scoped to the kernel crate) and keep `.cargo/config.toml` free of rustflags. See `build.rs` (top) for the pattern.
+11. **`static X: T = [0; N]` silently landing in `.bss` (M31)**: `objcopy -O binary` drops NOBITS sections, so a zero-initialised `static` inside a user binary won't make it into the raw blob the kernel copies — subsequent accesses hit a page fault. Force into `.data` by using a non-zero initializer or `#[link_section = ".data.something"]`. See `crates/helios-std/src/heap.rs` for the `[0xAA; N]` pattern.
 
 ## Working with Workers
 

@@ -17,3 +17,15 @@ panic = "abort"
 
 [profile.dev]
 panic = "abort"
+
+# The root crate (the kernel) is standalone. Userspace libraries and
+# binaries live in their own Cargo workspace at `crates/` — see
+# `crates/Cargo.toml`. The two workspaces are deliberately separate
+# because they use different linker scripts: the kernel links at
+# 0x80200000 (OpenSBI drop-in), userspace links at 0x40000000
+# (USER_CODE_BASE). `build.rs` invokes cargo inside `crates/` to compile
+# the user binaries and embeds the raw bytes into the kernel image via
+# include_bytes!.
+[workspace]
+# Keep crates/ out — it's a separate nested workspace.
+exclude = ["crates"]
