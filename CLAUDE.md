@@ -38,7 +38,8 @@ helios/
 │   ├── helios-std/           ← Rust-native "libc" — syscalls, graph types, print, allocator
 │   ├── hello-user/           ← first native Rust user program (spawn hello)
 │   ├── ls-user/              ← graph-native `ls` (M32) — `spawn ls <id>`
-│   └── cat-user/             ← graph-native `cat` (M32) — `spawn cat <id>`
+│   ├── cat-user/             ← graph-native `cat` (M32) — `spawn cat <id>`
+│   └── mmap-user/            ← SYS_MAP_NODE demo (M33) — `spawn mmap`
 ├── docs/                     ← design rationale, kernel docs, userspace
 ├── doom/, doomgeneric/       ← DOOM port (C, linked via FFI)
 ├── screenshots/              ← milestone screenshots + UART transcripts
@@ -121,7 +122,7 @@ Close-after-response, no keep-alive, 4KB request cap, 64KB response cap. Body-re
 
 Single-threaded, polling, `static mut` state. Socket table is 16 slots, listener table is 8 slots. Don't hold references across `tcp::*` calls (the kernel pattern is `drop(s)` before any call that might re-enter SOCKETS).
 
-## Milestone Status (M1–M32 Complete)
+## Milestone Status (M1–M33 Complete)
 
 See `README.md` for the user-facing list. Current front lines:
 
@@ -129,7 +130,8 @@ See `README.md` for the user-facing list. Current front lines:
 - **M30 (done):** Expanded syscall ABI — `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + the `traverse` capability kind. Four new demos (`who`, `explorer`, `editor`, `naughty`) prove introspection + mutation + write-cap refusal.
 - **M31 (done):** `helios-std` — the Rust-native "libc" for Helios user-mode. Raw syscall wrappers (`sys`), typed graph primitives (`NodeId`, `Label`/`LabelKind`, `Edge`/`EdgeInfo`, `Errno`), `print!`/`println!` macros over `SYS_PRINT`, `self_id`/`exit`, a 64 KiB bump allocator for `alloc::*`, and the `helios_entry!` macro that generates `_start` + a panic handler. First native Rust U-mode program lives at `crates/hello-user/`; `spawn hello` runs it. Kernel side: `build.rs` compiles the userspace sub-workspace and embeds the raw binary via `include_bytes!`. Exec edges are now R+W+X (see design notes below) and can span multiple consecutive 4 KiB pages (`USER_CODE_MAX_PAGES = 64`), so real linker-placed Rust binaries sit as one contiguous image at `0x4000_0000`.
 - **M32 (done):** Graph-native Rust tools: `ls <id>` walks a node's outgoing edges (`SYS_LIST_EDGES`) and `cat <id>` reads its content (`SYS_READ_NODE`). Live in `crates/ls-user/` and `crates/cat-user/`, both linked against helios-std. Shell grants the task-specific capability (`traverse` for ls, `read` for cat) at spawn time and passes the target id in `a0` — recovered via `helios_std::task::args()`. This is the M31 ergonomics test: can a 50-line Rust `main()` feel like normal Rust while talking directly to the graph? Yes.
-- **M33+ planned:** Cap delegation with a capability-derivation tree, multiple coexisting user tasks, `SYS_MAP_NODE` (so the bump allocator can request fresh pages instead of living inside the binary image), port DOOM to user mode as the litmus test.
+- **M33 (done):** `SYS_MAP_NODE` (syscall 8) — a U-mode task can request fresh zeroed writable memory. Kernel mints a `NodeType::Memory` node, allocates backing frames, adds a `write` edge from caller → new node, maps the frames into the caller's data VA window as R+W+U. helios-std exposes `graph::map_node` (returns `NonNull<u8>`) and `graph::map_node_slice` (returns `&'static mut [u8]`); `Errno::NoMem` added for the `-ENOMEM` case. Demo at `crates/mmap-user/` (`spawn mmap`) allocates 32 KiB + 8 KiB and verifies disjoint usable regions. The helios-std `GlobalAlloc` has NOT been rerouted through `map_node` yet — that's a follow-on. See `docs/design/capability-edges.md` "M33 Implementation Notes" for the VA-window / cap semantics / task-exit cleanup specifics.
+- **M34+ planned:** Cap delegation with a capability-derivation tree, multiple coexisting user tasks, reroute `GlobalAlloc` through `map_node`, port DOOM to user mode as the litmus test.
 
 ## Common Gotchas
 
@@ -196,4 +198,4 @@ Design conversations that happen only in chat get lost. **The repo is source of 
 
 ---
 
-*Last reviewed: 2026-04-17 (post-M31 helios-std landing).*
+*Last reviewed: 2026-04-17 (post-M33 `SYS_MAP_NODE`).*

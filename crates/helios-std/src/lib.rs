@@ -3,9 +3,10 @@
 //! This crate is what you link against instead of `libc` when targeting
 //! Helios. It exposes the kernel's graph-capability ABI as typed Rust:
 //!
-//! - [`sys`] — raw `ecall` wrappers for the 7 Helios syscalls
+//! - [`sys`] — raw `ecall` wrappers for the 8 Helios syscalls
 //!   (`SYS_READ_NODE`, `SYS_WRITE_NODE`, `SYS_LIST_EDGES`,
-//!   `SYS_FOLLOW_EDGE`, `SYS_SELF`, `SYS_PRINT`, `SYS_EXIT`).
+//!   `SYS_FOLLOW_EDGE`, `SYS_SELF`, `SYS_PRINT`, `SYS_EXIT`,
+//!   `SYS_MAP_NODE`).
 //! - [`graph`] — typed primitives: [`NodeId`][graph::NodeId],
 //!   [`Label`][graph::Label] (alias: [`LabelKind`][graph::LabelKind]),
 //!   [`Edge`][graph::Edge], plus wrappers that return
@@ -43,12 +44,16 @@
 //! }
 //! ```
 //!
-//! # M31 caveats (stopgaps until follow-on milestones)
+//! # M31/M33 caveats (stopgaps until follow-on milestones)
 //!
-//! - **64 KiB bump heap, no free.** The kernel has no `SYS_MAP_NODE` yet,
-//!   so the heap lives inside the binary image. `Vec`/`String`/`format!`
-//!   all work, but a long-running task will eventually exhaust the
-//!   arena. Track via [`heap::used`] / [`heap::capacity`].
+//! - **64 KiB bump heap, no free.** The heap still lives inside the
+//!   binary image for now — M33 adds [`graph::map_node`] for explicit
+//!   slabs of dynamic memory, but the `GlobalAlloc` backing for
+//!   `alloc::*` has not yet been rerouted through it. That integration
+//!   is a follow-on milestone; until then, `Vec`/`String`/`format!`
+//!   share the binary-embedded arena (trackable via [`heap::used`] /
+//!   [`heap::capacity`]), and user programs that want bigger working
+//!   sets should call [`graph::map_node`] directly.
 //! - **W^X at the task level is waived.** Exec edges are mapped R+W+X+U
 //!   so initialized data can be patched at load time. Cross-task caps
 //!   are still strictly MMU-enforced (no edge → no mapping → no access).

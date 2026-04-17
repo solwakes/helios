@@ -131,6 +131,10 @@ pub enum Errno {
     NotFound,
     /// `-EINVAL` — bad argument (out-of-range pointer, too-long string, etc.).
     Invalid,
+    /// `-ENOMEM` — no backing frames or no contiguous VA slots available
+    /// (M33: [`map_node`] can return this when the task's data window
+    /// is fragmented or full).
+    NoMem,
     /// Any other negative return not covered above.
     Other(isize),
 }
@@ -142,6 +146,7 @@ impl Errno {
             sys::EPERM => Errno::Perm,
             sys::ENOENT => Errno::NotFound,
             sys::EINVAL => Errno::Invalid,
+            sys::ENOMEM => Errno::NoMem,
             other => Errno::Other(other),
         }
     }
@@ -153,6 +158,7 @@ impl core::fmt::Display for Errno {
             Errno::Perm => f.write_str("EPERM"),
             Errno::NotFound => f.write_str("ENOENT"),
             Errno::Invalid => f.write_str("EINVAL"),
+            Errno::NoMem => f.write_str("ENOMEM"),
             Errno::Other(v) => write!(f, "E({})", v),
         }
     }
@@ -295,4 +301,69 @@ pub fn follow_edge(src: NodeId, label: &str) -> Result<NodeId, Errno> {
     } else {
         Ok(NodeId(r as u64))
     }
+}
+
+// ---------------------------------------------------------------------------
+// M33: SYS_MAP_NODE — kernel-granted anonymous writable memory.
+// ---------------------------------------------------------------------------
+
+/// Ask the kernel for a fresh, zeroed writable memory region of at
+/// least `size` bytes.
+///
+/// On success, returns a non-null pointer to the first byte of the new
+/// region. The kernel:
+///
+/// - Rounds `size` up to a 4 KiB multiple.
+/// - Creates a new `Memory` node in the graph.
+/// - Allocates the backing frames.
+/// - Adds a `write` edge from the calling task to the new node, which
+///   under the Helios cap semantics auto-implies `read` as well.
+/// - Maps the frames into the task's data-VA window as R+W+U leaves.
+///
+/// Returns:
+///
+/// - `Err(Errno::Invalid)` for `size == 0` or a request bigger than
+///   the task's data window can hold (16 pages = 64 KiB in M33).
+/// - `Err(Errno::NoMem)` when the task's data window doesn't have a
+///   contiguous run of free slots for the request.
+///
+/// # Safety note
+///
+/// The returned pointer is valid for the lifetime of the current task
+/// — the mapped region dies when the task exits (the kernel removes
+/// the `Memory` node, frees the task→mem edge, and frees the page
+/// tables). There is no [`unmap_node`] in M33; per-allocation free is
+/// a future milestone.
+///
+/// [`unmap_node`]: # "planned SYS_UNMAP_NODE, not yet shipped"
+pub fn map_node(size: usize) -> Result<core::ptr::NonNull<u8>, Errno> {
+    let r = unsafe { sys::sys_map_node(size, 0) };
+    if r < 0 {
+        return Err(Errno::from_raw(r));
+    }
+    // SAFETY: kernel returns either a negative errno (handled above)
+    // or a positive VA in the user data window, which by construction
+    // is non-null.
+    Ok(unsafe { core::ptr::NonNull::new_unchecked(r as *mut u8) })
+}
+
+/// Like [`map_node`] but returns the whole region as a borrowed mutable
+/// byte slice. The slice's length is `size` rounded up to the next 4 KiB
+/// multiple — i.e. the actual kernel-backed footprint.
+///
+/// The lifetime is `'static` because the allocation outlives any
+/// reasonable caller: it's released when the task exits (see
+/// [`map_node`] for the ownership story). Holding two `&'static mut`
+/// slices to *overlapping* regions would be unsound, but [`map_node`]
+/// + [`map_node_slice`] never hand out overlapping regions — each
+/// call gets its own disjoint slot range.
+pub fn map_node_slice(size: usize) -> Result<&'static mut [u8], Errno> {
+    let ptr = map_node(size)?;
+    // Round up to 4 KiB — matches the kernel's allocation granularity.
+    let pages = (size + 4095) / 4096;
+    let total = pages * 4096;
+    // SAFETY: `ptr` is non-null, 4 KiB-aligned, writable from U-mode
+    // (the kernel installed R+W+U leaves), and `total` <= 64 KiB so
+    // the arithmetic doesn't overflow on RV64.
+    Ok(unsafe { core::slice::from_raw_parts_mut(ptr.as_ptr(), total) })
 }

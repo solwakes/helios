@@ -76,6 +76,7 @@ fn type_to_u8(t: NodeType) -> u8 {
         NodeType::Directory => 4,
         NodeType::Computed => 5,
         NodeType::Channel => 6,
+        NodeType::Memory => 7,
     }
 }
 
@@ -88,6 +89,7 @@ fn u8_to_type(v: u8) -> Option<NodeType> {
         4 => Some(NodeType::Directory),
         5 => Some(NodeType::Computed),
         6 => Some(NodeType::Channel),
+        7 => Some(NodeType::Memory),
         _ => None,
     }
 }

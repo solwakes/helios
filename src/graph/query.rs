@@ -163,6 +163,7 @@ fn matches_filter(node: &Node, filter: &Filter<'_>) -> bool {
                 NodeType::Directory => "dir",
                 NodeType::Computed => "computed",
                 NodeType::Channel => "channel",
+                NodeType::Memory => "memory",
             };
             type_str == *t
         }

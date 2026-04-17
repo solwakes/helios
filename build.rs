@@ -165,7 +165,7 @@ fn build_user_binaries(helios_root: &Path, kernel_out_dir: &str) {
     // a corresponding `<name>_code_id()` accessor. Adding a new user
     // program is: (1) drop a crate into crates/, (2) list it here,
     // (3) wire `spawn <name>` in src/shell.rs.
-    for bin in &["hello-user", "ls-user", "cat-user"] {
+    for bin in &["hello-user", "ls-user", "cat-user", "mmap-user"] {
         build_user_crate(&cargo, &crates_dir, &user_target_dir, bin, &user_bin_dir);
     }
 
@@ -173,7 +173,7 @@ fn build_user_binaries(helios_root: &Path, kernel_out_dir: &str) {
     // This isn't perfect (cargo doesn't recurse into directories via
     // rerun-if-changed), but it catches the top-level manifests.
     println!("cargo:rerun-if-changed=crates/Cargo.toml");
-    for bin in &["hello-user", "ls-user", "cat-user"] {
+    for bin in &["hello-user", "ls-user", "cat-user", "mmap-user"] {
         println!("cargo:rerun-if-changed=crates/{bin}/Cargo.toml");
         println!("cargo:rerun-if-changed=crates/{bin}/src/main.rs");
         println!("cargo:rerun-if-changed=crates/{bin}/linker.ld");

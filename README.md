@@ -41,6 +41,7 @@ see [`docs/`](docs/) for design rationale and architecture notes:
 - **U-mode user tasks with capability-edge security** — graph edges *are* the capability space, MMU-enforced (M29–M30)
 - **helios-std** — Rust-native userspace library with raw syscall wrappers, typed graph primitives, `println!`, and a bump allocator; first native Rust binary runs as `spawn hello` (M31)
 - **graph-native Rust tools** — `spawn ls <id>` walks a node's outgoing edges, `spawn cat <id>` reads a node's content. Built on helios-std; each a few dozen lines of `match` over `Result<_, Errno>`. (M32)
+- **dynamic memory via `SYS_MAP_NODE`** — a U-mode task can request fresh zeroed writable memory at runtime. The kernel mints a `Memory` node, maps backing frames into the task's VA window, and grants a `write` edge from caller → new node. `spawn mmap` allocates 32 KiB + 8 KiB and verifies disjoint usable regions. (M33)
 
 ## building
 
@@ -275,6 +276,7 @@ the graph is the filesystem, the process table, the device tree, and the IPC mec
 | M30 | expanded syscall ABI (write, list_edges, follow_edge, self) | `10fcf5e` |
 | M31 | helios-std — Rust-native userspace library + hello user program | — |
 | M32 | graph-native Rust tools — `spawn ls <id>`, `spawn cat <id>` | — |
+| M33 | `SYS_MAP_NODE` — dynamic user memory via graph-native syscall (`spawn mmap`) | — |
 
 ## license
 

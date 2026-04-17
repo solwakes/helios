@@ -1311,6 +1311,7 @@ fn cmd_spawn(name: &str, arg: &str) {
         crate::println!("                spawn hello     (M31: native Rust on helios-std)");
         crate::println!("                spawn ls <id>   (M32: graph-native list_edges)");
         crate::println!("                spawn cat <id>  (M32: graph-native read_node)");
+        crate::println!("                spawn mmap      (M33: SYS_MAP_NODE dynamic memory)");
         return;
     }
     // Shortcut: "spawn userdemo" launches the boot-time demo code node.
@@ -1488,6 +1489,23 @@ fn cmd_spawn(name: &str, arg: &str) {
         crate::println!("user task returned {}", rc);
         return;
     }
+    // M33: SYS_MAP_NODE demo — the task starts with no read/write edges
+    // and mints its own memory via the new syscall. Self-traverse is
+    // nice-to-have for introspection but not required by the demo.
+    if name == "mmap" || name == "mmap-user" {
+        let code_id = crate::user::mmap_code_id();
+        if code_id == 0 {
+            crate::println!("mmap-user-code not initialized");
+            return;
+        }
+        crate::println!(
+            "helios> spawning M33 'mmap' — SYS_MAP_NODE dynamic memory (code #{})",
+            code_id,
+        );
+        let rc = crate::user::run_user_task_with_caps(code_id, &[], false, 0, 0);
+        crate::println!("user task returned {}", rc);
+        return;
+    }
     // Numeric argument -> treat as a code node id and launch as user task.
     if let Some(id) = parse_usize(name) {
         let code_id = id as u64;
@@ -1513,7 +1531,7 @@ fn cmd_spawn(name: &str, arg: &str) {
         "producer" => crate::task::demo_producer,
         "consumer" => crate::task::demo_consumer,
         _ => {
-            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), ls <id>, cat <id> (M32), or a numeric code node id", name);
+            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), ls <id>, cat <id> (M32), mmap (M33), or a numeric code node id", name);
             return;
         }
     };

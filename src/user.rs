@@ -20,7 +20,7 @@ use crate::arch::riscv64 as arch;
 use crate::graph::{self, NodeType};
 use crate::mm::page_table::{
     alloc_page_table, alloc_user_frame, PageTable, PageTableEntry,
-    PTE_R, PTE_U, PTE_W, PTE_X,
+    PTE_R, PTE_U, PTE_V, PTE_W, PTE_X,
 };
 use crate::mm::SATP_MODE_SV39;
 use crate::trap::TrapFrame;
@@ -68,11 +68,19 @@ pub const SYS_WRITE_NODE: usize = 4;
 pub const SYS_LIST_EDGES: usize = 5;
 pub const SYS_FOLLOW_EDGE: usize = 6;
 pub const SYS_SELF: usize = 7;
+// M33 addition:
+/// Ask the kernel for a fresh, zeroed writable memory region. Creates a
+/// `NodeType::Memory` node, allocates backing frames, adds a `write`
+/// edge from the caller to the new node, and maps the frames into the
+/// caller's data VA window. Returns the user VA of the first page.
+pub const SYS_MAP_NODE: usize = 8;
 
 // Negative error codes (two's complement of Linux-style errno).
 const EPERM: i64 = -1;
 const ENOENT: i64 = -2;
 const EINVAL: i64 = -3;
+// M33 addition — no backing frames or no contiguous VA slots available.
+const ENOMEM: i64 = -4;
 
 // ---------------------------------------------------------------------------
 // Edge-label-kind codes exposed to user mode via SYS_LIST_EDGES.
@@ -290,6 +298,26 @@ static CAT_USER_BIN: &[u8] = include_bytes!(concat!(
 /// Raw bytes of the `cat-user` graph-native content-read program.
 pub fn cat_program_bytes() -> &'static [u8] {
     CAT_USER_BIN
+}
+
+// ---------------------------------------------------------------------------
+// M33: `mmap-user` — exercises SYS_MAP_NODE.
+//
+// Same embedding pattern as the M31/M32 binaries. The demo program
+// calls `map_node` for a 32 KiB slab and an 8 KiB slab, fills each
+// with a distinct pattern, verifies readback, and checks the two VAs
+// don't overlap. See `crates/mmap-user/src/main.rs` for the
+// implementation.
+// ---------------------------------------------------------------------------
+
+static MMAP_USER_BIN: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/user-bins/mmap-user.bin",
+));
+
+/// Raw bytes of the `mmap-user` SYS_MAP_NODE demo program.
+pub fn mmap_program_bytes() -> &'static [u8] {
+    MMAP_USER_BIN
 }
 
 // The bad-demo blob: loads from an unmapped VA so the MMU (not the
@@ -767,6 +795,11 @@ struct UserAddressSpace {
     mappings: Vec<Mapping>,
     /// Entry VA (first exec edge).
     entry: usize,
+    /// Kernel VA (== PA, identity-mapped) of the L0 table covering the
+    /// user window `0x4000_0000..0x4020_0000`. `SYS_MAP_NODE` (M33) uses
+    /// this to install fresh R+W+U leaf PTEs in the data-VA slot range
+    /// without rebuilding the whole address space.
+    l0_pa: usize,
 }
 
 /// Kernel-side snapshot of the user task we launched, so syscall handlers
@@ -789,6 +822,16 @@ struct ActiveUserTask {
     exit_code: i64,
     /// Set to true if the task hit a cap violation / bad trap.
     faulted: bool,
+    /// Kernel VA (== PA) of the L0 table for the user window. M33's
+    /// `SYS_MAP_NODE` installs new leaf PTEs here on demand.
+    l0_pa: usize,
+    /// Graph-node ids of `NodeType::Memory` nodes this task allocated
+    /// via `SYS_MAP_NODE`. Cleaned up when the task exits — the nodes
+    /// are removed from the graph (dropping the task→mem `write` edge
+    /// with them). Backing frames follow the same lifetime as every
+    /// other user frame the kernel allocates today (i.e. they stay
+    /// resident; a frame-level free is a pre-existing M29 limitation).
+    mem_node_ids: Vec<u64>,
 }
 
 static mut ACTIVE: Option<ActiveUserTask> = None;
@@ -1160,11 +1203,13 @@ fn build_user_address_space(task_node_id: u64) -> Result<UserAddressSpace, &'sta
     mappings.push(Mapping { node_id: 0, va: USER_STACK_BASE, pa: stack_pa, kind: "stack" });
 
     let satp = SATP_MODE_SV39 | (root_pa >> 12);
+    let l0_pa = l0 as *const _ as usize;
 
     Ok(UserAddressSpace {
         satp,
         mappings,
         entry: entry.ok_or("no entry point after mapping")?,
+        l0_pa,
     })
 }
 
@@ -1276,6 +1321,8 @@ pub fn run_user_task_from_code_node(
             kctx: kctx_ptr,
             exit_code: 0,
             faulted: false,
+            l0_pa: aspace.l0_pa,
+            mem_node_ids: Vec::new(),
         });
     }
 
@@ -1307,19 +1354,30 @@ pub fn run_user_task_from_code_node(
 
     // We're back in kernel context (longjmp'd from trap handler). Collect
     // results and clean up.
-    let (code, faulted) = {
+    let (code, faulted, mem_nodes) = {
         let a = active().unwrap();
-        (a.exit_code, a.faulted)
+        (a.exit_code, a.faulted, a.mem_node_ids.clone())
     };
     unsafe { ACTIVE = None; }
+
+    // M33: drop any memory nodes the task allocated via SYS_MAP_NODE.
+    // `remove_node` also strips the task→mem `write` edge from the task
+    // node, keeping the graph tidy. Backing frames share the pre-M33
+    // per-task leak path (see the ActiveUserTask docstring).
+    if !mem_nodes.is_empty() {
+        let g = graph::get_mut();
+        for id in &mem_nodes {
+            g.remove_node(*id);
+        }
+    }
 
     // Mark the task node done.
     {
         let g = graph::get_mut();
         if let Some(node) = g.get_node_mut(task_node_id) {
             let info = alloc::format!(
-                "user task (M29)\nexit: {}\nfaulted: {}\n",
-                code, faulted,
+                "user task (M29)\nexit: {}\nfaulted: {}\nmap_node count: {}\n",
+                code, faulted, mem_nodes.len(),
             );
             node.content = info.into_bytes();
         }
@@ -1454,6 +1512,8 @@ fn run_user_task_inner(task_node_id: u64, arg0: usize, arg1: usize) -> i64 {
             kctx: kctx_ptr,
             exit_code: 0,
             faulted: false,
+            l0_pa: aspace.l0_pa,
+            mem_node_ids: Vec::new(),
         });
     }
 
@@ -1473,18 +1533,27 @@ fn run_user_task_inner(task_node_id: u64, arg0: usize, arg1: usize) -> i64 {
         }
     }
 
-    let (code, faulted) = {
+    let (code, faulted, mem_nodes) = {
         let a = active().unwrap();
-        (a.exit_code, a.faulted)
+        (a.exit_code, a.faulted, a.mem_node_ids.clone())
     };
     unsafe { ACTIVE = None; }
+
+    // M33: drop any SYS_MAP_NODE-allocated memory nodes. See the
+    // matching block in `run_user_task_from_code_node` for rationale.
+    if !mem_nodes.is_empty() {
+        let g = graph::get_mut();
+        for id in &mem_nodes {
+            g.remove_node(*id);
+        }
+    }
 
     {
         let g = graph::get_mut();
         if let Some(node) = g.get_node_mut(task_node_id) {
             let info = alloc::format!(
-                "user task\nexit: {}\nfaulted: {}\n",
-                code, faulted,
+                "user task\nexit: {}\nfaulted: {}\nmap_node count: {}\n",
+                code, faulted, mem_nodes.len(),
             );
             node.content = info.into_bytes();
         }
@@ -1578,6 +1647,12 @@ pub fn handle_syscall(frame: &mut TrapFrame) {
         SYS_SELF => {
             let id = active().map(|a| a.task_node_id).unwrap_or(0);
             frame.set_a0(id as usize);
+        }
+        SYS_MAP_NODE => {
+            let size = frame.a0();
+            let flags = frame.a1();
+            let r = sys_map_node(size, flags);
+            frame.set_a0(r as usize);
         }
         _ => {
             crate::println!("[user] unknown syscall #{}", nr);
@@ -1846,6 +1921,177 @@ fn sys_list_edges(src: u64, buf_va: usize, max_entries: usize) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
+// M33: SYS_MAP_NODE — kernel-granted anonymous writable memory.
+//
+// The user asks for N bytes of zeroed writable memory. We round up to
+// a 4 KiB multiple, allocate that many frames, create a fresh
+// `NodeType::Memory` graph node to own them, add a `write` edge from
+// the caller's task node to the new memory node (which auto-implies
+// `read` under the M30 cap semantics), and map the frames into the
+// caller's data-VA window as R+W+U leaves. On success we return the
+// user VA of the first mapped page; on failure we return a negative
+// errno.
+//
+// VA window management. The task's data window is 16 4 KiB slots at
+// `USER_DATA_BASE..USER_DATA_BASE+USER_DATA_MAX_PAGES*4096`. On each
+// call we walk the L0 table in that range looking for a contiguous
+// run of `n_pages` unused slots. This is the bitmap-over-16-slots
+// approach from the M33 proposal (docs/design/proposals/post-m32-
+// directions.md, Proposal A) — except we don't materialise a separate
+// bitmap, we just inspect the V bit of each PTE directly. At 16 slots
+// the walk is trivial; a denser scheme would be overkill.
+//
+// Failure modes and errno:
+//   - `flags != 0`                        → -EINVAL
+//   - `size == 0`                         → -EINVAL
+//   - `size` rounded up > 16 * 4 KiB      → -EINVAL
+//   - no contiguous run of free slots     → -ENOMEM
+//   - no active user task                 → -EINVAL (shouldn't happen)
+// ---------------------------------------------------------------------------
+
+/// Counter for synthesised `user-mem-N` node names.
+static MEM_NODE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+/// Find a contiguous run of `n` unused slots in the data-VA window
+/// starting at `data_start`, returning the first slot's *offset within*
+/// `[data_start..data_start+USER_DATA_MAX_PAGES]` (i.e. 0-based).
+fn find_free_data_run(l0: &PageTable, data_start: usize, n: usize) -> Option<usize> {
+    if n == 0 || n > USER_DATA_MAX_PAGES {
+        return None;
+    }
+    let mut run_begin: Option<usize> = None;
+    let mut run_len: usize = 0;
+    for i in 0..USER_DATA_MAX_PAGES {
+        let slot = data_start + i;
+        let used = (l0.entries[slot].0 & PTE_V) != 0;
+        if used {
+            run_begin = None;
+            run_len = 0;
+        } else {
+            if run_begin.is_none() {
+                run_begin = Some(i);
+            }
+            run_len += 1;
+            if run_len == n {
+                return run_begin;
+            }
+        }
+    }
+    None
+}
+
+fn sys_map_node(size: usize, flags: usize) -> i64 {
+    // Validate flags: only 0 is defined in M33.
+    if flags != 0 {
+        crate::println!("[sys] SYS_MAP_NODE: unsupported flags={:#x}", flags);
+        return EINVAL;
+    }
+    if size == 0 {
+        return EINVAL;
+    }
+
+    // Round up to 4 KiB multiple.
+    let aligned = match size.checked_add(4095) {
+        Some(v) => v & !4095usize,
+        None => return EINVAL,
+    };
+    let max_bytes = USER_DATA_MAX_PAGES * 4096;
+    if aligned > max_bytes {
+        return EINVAL;
+    }
+    let n_pages = aligned / 4096;
+
+    // Fetch the task's L0 table PA. `active()` is set for the duration
+    // of a U-mode task (see run_user_task_inner); syscalls only fire
+    // from U-mode, so this should always be `Some`.
+    let (l0_pa, task_id) = match active() {
+        Some(a) => (a.l0_pa, a.task_node_id),
+        None => {
+            crate::println!("[sys] SYS_MAP_NODE: no active user task");
+            return EINVAL;
+        }
+    };
+    // SAFETY: l0_pa was filled from a kernel-side `alloc_page_table()`
+    // result when we built the address space, so it's a live,
+    // identity-mapped 4 KiB-aligned `PageTable`.
+    let l0 = unsafe { &mut *(l0_pa as *mut PageTable) };
+
+    let data_start = (USER_DATA_BASE - USER_CODE_BASE) / 4096; // = 256
+    let slot_off = match find_free_data_run(l0, data_start, n_pages) {
+        Some(o) => o,
+        None => {
+            crate::println!(
+                "[sys] SYS_MAP_NODE: no contiguous run of {} slot(s) in data window",
+                n_pages,
+            );
+            return ENOMEM;
+        }
+    };
+
+    // Allocate `n_pages` fresh zeroed frames up front. `alloc_user_frame`
+    // pulls from the kernel heap, which is identity-mapped.
+    let mut frames: Vec<usize> = Vec::with_capacity(n_pages);
+    for _ in 0..n_pages {
+        frames.push(alloc_user_frame());
+    }
+
+    // Create the graph node that owns those frames.
+    let mem_id = {
+        let g = graph::get_mut();
+        let n = MEM_NODE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let name = alloc::format!("user-mem-{}", n);
+        let id = g.create_node(NodeType::Memory, &name);
+        // Add the task→mem `write` edge. Write implies read under the
+        // M30 cap semantics, so the task can also `SYS_READ_NODE` this
+        // node (not just touch its pages via MMU).
+        g.add_edge(task_id, "write", id);
+        // Stash a small diagnostic string as the node's content so
+        // SYS_LIST_EDGES / navigator views show something meaningful;
+        // the user-visible mapping is the frames themselves, not this.
+        if let Some(node) = g.get_node_mut(id) {
+            node.content = alloc::format!(
+                "anon mem: size={} bytes ({} page(s)), va={:#x}\n",
+                aligned,
+                n_pages,
+                USER_DATA_BASE + slot_off * 4096,
+            )
+            .into_bytes();
+        }
+        id
+    };
+
+    // Install the leaf PTEs. Each frame gets R+W+U (readable and
+    // writable from U-mode; invisible to other tasks — no edge, no
+    // mapping, no access).
+    let leaf_flags = PTE_R | PTE_W | PTE_U;
+    for (i, &pa) in frames.iter().enumerate() {
+        l0.entries[data_start + slot_off + i] =
+            PageTableEntry::leaf((pa >> 12) as u64, leaf_flags);
+    }
+
+    // Update the active task's cap snapshots (so syscalls targeting
+    // the new node see it as allowed too) and track the node for
+    // cleanup on exit.
+    if let Some(a) = active_mut() {
+        a.read_allowed.push(mem_id);
+        a.write_allowed.push(mem_id);
+        a.mem_node_ids.push(mem_id);
+    }
+
+    // Flush the TLB for the current asid. Strictly, an invalid→valid
+    // PTE transition doesn't require a fence on RISC-V, but being
+    // conservative here costs essentially nothing.
+    unsafe { core::arch::asm!("sfence.vma zero, zero"); }
+
+    let va = USER_DATA_BASE + slot_off * 4096;
+    crate::println!(
+        "[sys] SYS_MAP_NODE(size={}, flags={}) -> node #{}, va={:#010x}, {} page(s)",
+        size, flags, mem_id, va, n_pages,
+    );
+    va as i64
+}
+
+// ---------------------------------------------------------------------------
 // M30: SYS_FOLLOW_EDGE — find the first outgoing edge from `src` whose
 // label exactly matches the given string, and return the target node id.
 // ---------------------------------------------------------------------------
@@ -1915,6 +2161,8 @@ static mut HELLO_CODE_ID: u64 = 0;
 static mut LS_CODE_ID: u64 = 0;
 /// M32: node id of the `cat` graph-native Rust-native user program.
 static mut CAT_CODE_ID: u64 = 0;
+/// M33: node id of the `mmap` demo (exercises SYS_MAP_NODE).
+static mut MMAP_CODE_ID: u64 = 0;
 
 /// Initialize the demo user-space nodes: a Binary code node for each
 /// demo + a Text node the M29 demo reads + the scratch node the M30
@@ -1994,6 +2242,12 @@ pub fn init() {
     if let Some(n) = g.get_node_mut(cat_id) { n.content = cat_bytes.to_vec(); }
     g.add_edge(1, "child", cat_id);
 
+    // M33: SYS_MAP_NODE demo program.
+    let mmap_bytes = mmap_program_bytes();
+    let mmap_id = g.create_node(NodeType::Binary, "mmap-user-code");
+    if let Some(n) = g.get_node_mut(mmap_id) { n.content = mmap_bytes.to_vec(); }
+    g.add_edge(1, "child", mmap_id);
+
     unsafe {
         DEMO_CODE_ID = code_id;
         BADDEMO_CODE_ID = bad_id;
@@ -2006,6 +2260,7 @@ pub fn init() {
         HELLO_CODE_ID = hello_id;
         LS_CODE_ID = ls_id;
         CAT_CODE_ID = cat_id;
+        MMAP_CODE_ID = mmap_id;
     }
     crate::println!(
         "[user] demo nodes ready: demo=#{} ({}B) bad=#{} ({}B) text=#{}",
@@ -2023,6 +2278,10 @@ pub fn init() {
     crate::println!(
         "[user] M32 native Rust: ls=#{} ({} B) cat=#{} ({} B)",
         ls_id, ls_bytes.len(), cat_id, cat_bytes.len(),
+    );
+    crate::println!(
+        "[user] M33 native Rust: mmap=#{} ({} B)",
+        mmap_id, mmap_bytes.len(),
     );
 }
 
@@ -2051,3 +2310,6 @@ pub fn ls_code_id() -> u64 { unsafe { LS_CODE_ID } }
 /// Node id of the compiled `cat-user` Rust binary (M32).
 #[allow(static_mut_refs)]
 pub fn cat_code_id() -> u64 { unsafe { CAT_CODE_ID } }
+/// Node id of the compiled `mmap-user` Rust binary (M33).
+#[allow(static_mut_refs)]
+pub fn mmap_code_id() -> u64 { unsafe { MMAP_CODE_ID } }

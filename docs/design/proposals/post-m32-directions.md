@@ -1,6 +1,6 @@
 # Post-M32 Directions
 
-*Status: Proposal. Written 2026-04-17 after M31 + M32 shipped overnight. Not yet reviewed. Intended to give a structured set of next-milestone options — pick one (or restructure) rather than re-derive the roadmap from scratch.*
+*Status: Partially shipped. Written 2026-04-17 after M31 + M32 shipped overnight. Proposal A was implemented as M33 later the same day (see the "Shipped in M33" note below). Proposals B and C are still on the table.*
 
 ## Context
 
@@ -40,6 +40,13 @@ Edges are kernel-declared-only at task spawn. There's no way for task A to grant
 ## Three Proposals
 
 ### Proposal A: `SYS_MAP_NODE` — Kernel-granted user memory
+
+> **Shipped in M33.** The syscall number is 8; the ABI below was implemented as spec. Notes on what actually landed:
+>
+> - Kernel side: `src/user.rs` gained `sys_map_node`, `find_free_data_run` (walks the L0 PTEs directly as the "bitmap over 16 slots"), a new `NodeType::Memory` variant in `src/graph/mod.rs`, and per-task `mem_node_ids` tracking so memory nodes are removed on task exit. See "M33 Implementation Notes" in `docs/design/capability-edges.md`.
+> - helios-std: `sys::SYS_MAP_NODE`, `sys::ENOMEM`, `sys::sys_map_node`, `graph::Errno::NoMem`, `graph::map_node`, `graph::map_node_slice`. Re-exported from `prelude`.
+> - Demo: `crates/mmap-user/` (`spawn mmap`) maps 32 KiB + 8 KiB, fills each with a distinct pattern, verifies readback, checks non-overlap, and proves the two regions are disjoint. UART transcript at `screenshots/m33-mmap-uart.txt`.
+> - **Not shipped in M33 (deferred intentionally):** rerouting `GlobalAlloc` through `map_node`. The 64 KiB bump heap is still in-binary; the follow-on is to shrink it to 4 KiB and chain `map_node(64 KiB)` slabs. This kept M33 scoped to "ship the primitive, unblock downstream work". Cap-model note: `map_node` self-grants `write` (no "grant" cap gates allocation) — matches anonymous `mmap` on Unix; revisit alongside Proposal C.
 
 **Goal:** A user task can request "give me N bytes of writable memory I own" via syscall. The kernel allocates a fresh node, maps its content pages into the caller's VA, adds a `write` edge from caller → new node. The user sees a pointer to N zeroed bytes.
 
@@ -164,9 +171,9 @@ This keeps the thesis pure: authority to redistribute authority is itself an edg
 
 ## Recommendation
 
-Ship **Proposal A (`SYS_MAP_NODE`) first.** It unblocks both B (larger edge-list buffers become cheap) and C (dynamic edge creation needs dynamic pages). It's self-contained, has low thesis risk, and makes the next several milestones smaller.
+**Proposal A (`SYS_MAP_NODE`) shipped as M33.** It unblocks both B (larger edge-list buffers become cheap) and C (dynamic edge creation needs dynamic pages).
 
-Then **Proposal B** as a follow-up (label strings in `ls`) — it's cheap once MAP_NODE lands.
+Next: **Proposal B** (label strings in `ls`) — it's cheap to build on top of `map_node`.
 
 Then **Proposal C** (CDT) as the first "big" milestone after the utility work. By then helios-std is mature enough that demo programs for delegation/revocation are straightforward to write.
 

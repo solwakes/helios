@@ -23,6 +23,8 @@ pub const SYS_WRITE_NODE: usize = 4;
 pub const SYS_LIST_EDGES: usize = 5;
 pub const SYS_FOLLOW_EDGE: usize = 6;
 pub const SYS_SELF: usize = 7;
+/// M33: kernel-granted anonymous writable memory.
+pub const SYS_MAP_NODE: usize = 8;
 
 // ---------------------------------------------------------------------------
 // Errno values returned by syscalls (matching the kernel's constants)
@@ -31,6 +33,8 @@ pub const SYS_SELF: usize = 7;
 pub const EPERM: isize = -1;
 pub const ENOENT: isize = -2;
 pub const EINVAL: isize = -3;
+/// M33: out of memory (no backing frames or no contiguous VA slots).
+pub const ENOMEM: isize = -4;
 
 // ---------------------------------------------------------------------------
 // Raw `ecall` helpers
@@ -100,4 +104,17 @@ pub unsafe fn syscall_exit(code: i32) -> ! {
         in("a0") code as usize,
         options(noreturn),
     );
+}
+
+/// `SYS_MAP_NODE(size, flags)` — ask the kernel for `size` bytes of
+/// fresh zeroed writable memory. Returns the user VA of the first
+/// mapped page, or a negative errno.
+///
+/// Flags must be 0 in M33 (reserved for future use, e.g. "map at a
+/// specific VA hint" or "never-reclaim"). See
+/// [`crate::graph::map_node`] for the typed wrapper most call sites
+/// should use instead.
+#[inline(always)]
+pub unsafe fn sys_map_node(size: usize, flags: usize) -> isize {
+    syscall2(SYS_MAP_NODE, size, flags)
 }

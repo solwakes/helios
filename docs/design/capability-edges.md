@@ -1,6 +1,6 @@
 # Capability Edges: Graph-Native Security
 
-*Status: Design committed M28, first implementation M29, ABI expanded M30. This document describes the model; implementation details follow as they land.*
+*Status: Design committed M28, first implementation M29, ABI expanded M30 + M33. This document describes the model; implementation details follow as they land.*
 
 ## The Core Idea
 
@@ -53,10 +53,11 @@ The task now sees exactly its permitted view. Any access to memory outside that 
 
 The MMU does the enforcement. The kernel only has to build the right page table.
 
-## Syscall API (M29 + M30)
+## Syscall API (M29 + M30 + M33)
 
 The ABI is append-only and numbered; higher numbers were added in later
-milestones. M30 also introduced the `traverse` capability kind.
+milestones. M30 introduced the `traverse` capability kind; M33 added
+`MAP_NODE` for kernel-granted anonymous writable memory.
 
 | Num | Name           | Args                              | Cap check              | Returns                              |
 |-----|----------------|-----------------------------------|------------------------|--------------------------------------|
@@ -67,6 +68,7 @@ milestones. M30 also introduced the `traverse` capability kind.
 | 5   | `LIST_EDGES`   | `a0`=src_id, `a1`=buf, `a2`=max   | `traverse` edge to src | #entries written, or -EPERM / -ENOENT |
 | 6   | `FOLLOW_EDGE`  | `a0`=src_id, `a1`=label, `a2`=len | `traverse` edge to src | target_id, or -EPERM / -ENOENT       |
 | 7   | `SELF`         | —                                 | — (always allowed)     | caller's task node id                |
+| 8   | `MAP_NODE`     | `a0`=size_bytes, `a1`=flags (=0)  | — (self-granting `write`) | user VA of first mapped page, or -EINVAL / -ENOMEM |
 
 ### Cap-check kinds
 
@@ -103,12 +105,13 @@ dereferences the pointer directly. Out-of-range buffers → `-EINVAL`.
 ### Still planned
 
 - `APPEND_NODE` (gated on `write` edge)
-- `CREATE_NODE`, `ADD_EDGE` (gated by a "create"/"grant" cap — target: M32+, same milestone as CDT)
-- `MAP_NODE` (map target into caller's address space for direct access,
-  avoiding syscall overhead). Also the intended replacement for
-  helios-std's fixed-size bump allocator from M31 — once a task can
-  request fresh zero pages at runtime, `alloc::*` can have a real
-  heap instead of 64 KiB carried in the binary image.
+- `CREATE_NODE`, `ADD_EDGE` (gated by a "create"/"grant" cap — target: M34+, same milestone as CDT)
+- `UNMAP_NODE` / `map_node` free path — M33 has no per-allocation
+  reclaim. A region dies with the task.
+- Rerouting helios-std's `GlobalAlloc` through `MAP_NODE` — the syscall
+  ships in M33, but the in-binary bump heap is still what backs
+  `alloc::*`. Shrinking it and chaining kernel-granted slabs is a
+  follow-on.
 
 ## Delegation and Revocation
 
@@ -159,9 +162,10 @@ Plan 9's namespaces don't enforce; the file server does. Helios edges are enforc
 - **M30** (done): Expanded syscall ABI — `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + the `traverse` cap kind. Four new user demos (`who`, `explorer`, `editor`, `naughty`) prove introspection + mutation + refusal all work end-to-end.
 - **M31** (done): `helios-std` — the Rust-native userspace library. Typed syscall wrappers (`NodeId`, `Label`, `Errno`, `Edge`), `println!`, bump allocator, `_start`/panic-handler glue via `helios_entry!`. First linker-placed Rust U-mode binary (`hello-user`) runs end-to-end with the cap model: `Errno::Perm` propagates through `Result`, and a deliberate `read_node(root)` refusal is observably handled without killing the task. Kernel side: `build_user_address_space` now maps multi-page exec edges (R+W+X+U — W^X inside a task is waived until a follow-on edge-split; cross-task enforcement is unchanged).
 - **M32** (done): Graph-native Rust tools — `ls <id>` enumerates outgoing edges (`SYS_LIST_EDGES`), `cat <id>` reads node content (`SYS_READ_NODE`). Both live at `crates/ls-user` / `crates/cat-user`, each a few dozen lines of `match` over `Result<_, Errno>`. Shell grants the exact cap each tool needs (`traverse` for `ls`, `read` for `cat`) and passes the target id as the first task arg. Validates that the M31 ergonomics carry through to real tool-shaped programs.
-- **M33**: Cap delegation + CDT for revocation. (Previously planned for M31 but the userspace library caught up to the design doc first.)
-- **M34**: Multiple user tasks coexisting.
-- **M35**: Port DOOM to user mode (the litmus test — does the cap model handle a big, real program?).
+- **M33** (done): `SYS_MAP_NODE` — kernel-granted anonymous writable memory. Tasks can mint fresh `NodeType::Memory` nodes at runtime; the kernel allocates backing frames, adds a `write` edge from caller → new node (implying `read`), and maps the frames into the task's data-VA window. Demo at `crates/mmap-user/` (`spawn mmap`). The helios-std `GlobalAlloc` backend has *not* been rerouted through `map_node` yet — that's an additive refactor deferred so the milestone stays scoped to "unblock future cool stuff". See "M33 Implementation Notes" below.
+- **M34**: Cap delegation + CDT for revocation. (Originally M33; bumped because `SYS_MAP_NODE` is the precondition — dynamic edges need dynamic pages.)
+- **M35**: Multiple user tasks coexisting.
+- **M36**: Port DOOM to user mode (the litmus test — does the cap model handle a big, real program?).
 
 ## M30 Implementation Notes
 
@@ -241,6 +245,56 @@ Things the `helios-std` milestone learned, worth preserving:
    (direct load/store to an unmapped VA), not on syscall `-EPERM`
    returns. This is what lets graceful "ask forgiveness" patterns work.
 
+## M33 Implementation Notes
+
+Things `SYS_MAP_NODE` learned, worth preserving:
+
+1. **Cap semantics: `map_node` self-grants `write`.** The syscall
+   synthesizes the new `Memory` node and then adds a `write` edge from
+   the caller's task node → new node. `write` implies `read` under the
+   M30 semantics, so the task can also `SYS_READ_NODE` / `SYS_WRITE_NODE`
+   the region in addition to touching its pages directly via MMU.
+   There is no separate "may I allocate?" cap gating the syscall itself
+   — every U-mode task can call `map_node`. That's a deliberate M33
+   decision, matching the "a task can always extend itself" model of
+   anonymous `mmap(MAP_ANONYMOUS)` on Unix. Gating allocation (e.g. by
+   a quota node) is a post-CDT design question.
+
+2. **VA window management: walk the L0 PTEs directly.** The task's
+   data-VA window is 16 slots at `USER_DATA_BASE..USER_DATA_BASE +
+   USER_DATA_MAX_PAGES*4096` (`0x4010_0000..0x4011_0000`). Rather than
+   materialising a separate per-task bitmap, the kernel inspects the
+   `PTE_V` bit of each L0 entry on every call to find a contiguous run
+   of unused slots. At 16 slots this walk is trivial; a denser structure
+   would be over-engineered. `build_user_address_space` marks the exec /
+   read / write / stack slots as used by installing leaves; `map_node`
+   treats anything with `V=0` as free. See `find_free_data_run` in
+   `src/user.rs`.
+
+3. **Task-exit cleanup removes the `Memory` nodes, leaks the frames.**
+   `ActiveUserTask.mem_node_ids` tracks every `Memory` node the task
+   minted during its run. On exit (or fault), after `ACTIVE = None`,
+   the kernel calls `graph::remove_node` on each of those ids — this
+   also strips the task→mem `write` edge from the graph. The backing
+   frames themselves are not freed; that matches the pre-existing M29
+   behaviour for *all* user frames (stacks, read/write edge pages,
+   page tables), which also leak on task exit. A proper frame
+   reclaim lands with a real page allocator, not as part of M33.
+
+4. **`NodeType::Memory` is a real graph node type.** Added in M33 so
+   anonymous memory is visibly distinct from text/binary/config nodes
+   in `ls` / the navigator. It serialises (`persist::type_to_u8` → 7)
+   and renders (grey in the graph view) like any other type. Keeping
+   the thesis pure: "everything is a memory" means even anonymous
+   heap is a graph citizen.
+
+5. **No `SYS_UNMAP_NODE` yet.** A task cannot release a region
+   before it exits. The syscall is an obvious follow-on — the kernel
+   has all the information it needs (node id → L0 entries via the
+   frame PA) — but it's not in M33 because (a) there's no demo that
+   needs it, and (b) the cleanest API probably takes the `NodeId`, not
+   the VA, which requires plumbing a lookup that doesn't exist yet.
+
 ---
 
-*Last reviewed: 2026-04-17 (post-M32 graph-native Rust tools: `spawn ls`, `spawn cat`). Next review after M33 CDT/delegation.*
+*Last reviewed: 2026-04-17 (post-M33 `SYS_MAP_NODE`: `spawn mmap` allocates dynamically). Next review after the heap-allocator refactor or CDT lands.*

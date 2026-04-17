@@ -1,0 +1,321 @@
+
+OpenSBI v1.7
+   ____                    _____ ____ _____
+  / __ \                  / ____|  _ \_   _|
+ | |  | |_ __   ___ _ __ | (___ | |_) || |
+ | |  | | '_ \ / _ \ '_ \ \___ \|  _ < | |
+ | |__| | |_) |  __/ | | |____) | |_) || |_
+  \____/| .__/ \___|_| |_|_____/|____/_____|
+        | |
+        |_|
+
+Platform Name               : riscv-virtio,qemu
+Platform Features           : medeleg
+Platform HART Count         : 1
+Platform IPI Device         : aclint-mswi
+Platform Timer Device       : aclint-mtimer @ 10000000Hz
+Platform Console Device     : uart8250
+Platform HSM Device         : ---
+Platform PMU Device         : ---
+Platform Reboot Device      : syscon-reboot
+Platform Shutdown Device    : syscon-poweroff
+Platform Suspend Device     : ---
+Platform CPPC Device        : ---
+Firmware Base               : 0x80000000
+Firmware Size               : 317 KB
+Firmware RW Offset          : 0x40000
+Firmware RW Size            : 61 KB
+Firmware Heap Offset        : 0x46000
+Firmware Heap Size          : 37 KB (total), 2 KB (reserved), 11 KB (used), 23 KB (free)
+Firmware Scratch Size       : 4096 B (total), 1400 B (used), 2696 B (free)
+Runtime SBI Version         : 3.0
+Standard SBI Extensions     : time,rfnc,ipi,base,hsm,srst,pmu,dbcn,fwft,legacy,dbtr,sse
+Experimental SBI Extensions : none
+
+Domain0 Name                : root
+Domain0 Boot HART           : 0
+Domain0 HARTs               : 0*
+Domain0 Region00            : 0x0000000000100000-0x0000000000100fff M: (I,R,W) S/U: (R,W)
+Domain0 Region01            : 0x0000000010000000-0x0000000010000fff M: (I,R,W) S/U: (R,W)
+Domain0 Region02            : 0x0000000002000000-0x000000000200ffff M: (I,R,W) S/U: ()
+Domain0 Region03            : 0x0000000080040000-0x000000008004ffff M: (R,W) S/U: ()
+Domain0 Region04            : 0x0000000080000000-0x000000008003ffff M: (R,X) S/U: ()
+Domain0 Region05            : 0x000000000c400000-0x000000000c5fffff M: (I,R,W) S/U: (R,W)
+Domain0 Region06            : 0x000000000c000000-0x000000000c3fffff M: (I,R,W) S/U: (R,W)
+Domain0 Region07            : 0x0000000000000000-0xffffffffffffffff M: () S/U: (R,W,X)
+Domain0 Next Address        : 0x0000000080200000
+Domain0 Next Arg1           : 0x0000000087e00000
+Domain0 Next Mode           : S-mode
+Domain0 SysReset            : yes
+Domain0 SysSuspend          : yes
+
+Boot HART ID                : 0
+Boot HART Domain            : root
+Boot HART Priv Version      : v1.12
+Boot HART Base ISA          : rv64imafdch
+Boot HART ISA Extensions    : sstc,zicntr,zihpm,zicboz,zicbom,sdtrig,svadu
+Boot HART PMP Count         : 16
+Boot HART PMP Granularity   : 2 bits
+Boot HART PMP Address Bits  : 54
+Boot HART MHPM Info         : 16 (0x0007fff8)
+Boot HART Debug Triggers    : 2 triggers
+Boot HART MIDELEG           : 0x0000000000001666
+Boot HART MEDELEG           : 0x0000000000f4b509
+
+========================================
+  _   _      _ _
+ | | | | ___| (_) ___  ___
+ | |_| |/ _ \ | |/ _ \/ __|
+ |  _  |  __/ | | (_) \__ \
+ |_| |_|\___|_|_|\___/|___/
+
+  Everything is a memory.
+========================================
+
+[boot] Hart 0 reporting for duty
+[boot] Helios v0.1.0
+[mm] Setting up Sv39 page tables...
+[mm] Identity mapping MMIO: 0x0..0x40000000 (1 GiB gigapage, RW)
+[mm] Identity mapping RAM: 0x80000000..0x88000000 (64 x 2 MiB megapages, RWX)
+[mm] Enabling Sv39 paging (satp = 0x800000000008075c)
+[mm] Paging enabled successfully.
+[graph] Initialized: 9 nodes, 8 edges
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[blk] Found block device @ 0x10008000 (version 2)
+[virtio] Queue 0: max=1024, using=16
+[blk] Device ready, queue size=16
+[blk] VirtIO block device initialized
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[tablet] No VirtIO tablet found
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[input] No VirtIO keyboard found
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[net] Found net device @ 0x10007000 (version 2)
+[virtio] Device features: lo=0x30bf8024 hi=0x00000101
+[virtio] Queue 0: max=1024, using=16
+[virtio] Queue 1: max=1024, using=16
+[net] Device ready, rxq size=16, txq size=16, bufs=16/16
+[net] VirtIO net initialized, MAC=52:54:00:12:34:56
+[fb] Initialising ramfb framebuffer...
+[ramfb] fw_cfg device verified (QEMU signature OK)
+[ramfb] etc/ramfb not found — is -device ramfb enabled?
+[fb] No ramfb available — UART only
+[trap] Trap handler installed at 0x80200040
+[trap] Timer interrupts enabled (interval: 100ms), SUM enabled
+
+[boot] Helios kernel initialized successfully.
+
+[ipc] IPC subsystem initialized (channels under node #11)
+[user] /user subgraph ready (node #12)
+[task] Preemptive multitasking initialized (task #0 = shell)
+[user] demo nodes ready: demo=#15 (64B) bad=#16 (32B) text=#17
+[user] M30 demos: who=#18 (208B) explorer=#19 (352B) editor=#20 (512B) naughty=#21 (288B) scratch=#22
+[user] M31 native Rust: hello=#23 (72376 B)
+[user] M32 native Rust: ls=#24 (72504 B) cat=#25 (71976 B)
+[user] M33 native Rust: mmap=#26 (70480 B)
+helios> spawn mmap
+helios> spawning M33 'mmap' — SYS_MAP_NODE dynamic memory (code #26)
+[user] task #27 mapped 19 regions, entry=0x40000000, satp=0x80000000000807ba
+       exec : va=0x40000000 pa=0x807bd000 node=26
+       exec : va=0x40001000 pa=0x807be000 node=26
+       exec : va=0x40002000 pa=0x807bf000 node=26
+       exec : va=0x40003000 pa=0x807c0000 node=26
+       exec : va=0x40004000 pa=0x807c1000 node=26
+       exec : va=0x40005000 pa=0x807c3000 node=26
+       exec : va=0x40006000 pa=0x807c4000 node=26
+       exec : va=0x40007000 pa=0x807c5000 node=26
+       exec : va=0x40008000 pa=0x807c6000 node=26
+       exec : va=0x40009000 pa=0x807c7000 node=26
+       exec : va=0x4000a000 pa=0x807c8000 node=26
+       exec : va=0x4000b000 pa=0x807c9000 node=26
+       exec : va=0x4000c000 pa=0x807ca000 node=26
+       exec : va=0x4000d000 pa=0x807cb000 node=26
+       exec : va=0x4000e000 pa=0x807cc000 node=26
+       exec : va=0x4000f000 pa=0x807cd000 node=26
+       exec : va=0x40010000 pa=0x807ce000 node=26
+       exec : va=0x40011000 pa=0x807cf000 node=26
+       stack: va=0x401ff000 pa=0x807d0000 (R/W/U)
+mmap: exercising SYS_MAP_NODE
+[sys] SYS_MAP_NODE(size=32768, flags=0) -> node #28, va=0x40100000, 8 page(s)
+  A: 0x40100000..0x40108000 (32768 bytes, 8 page(s))
+  A: filled + verified 8192 words of 0xabcdef01
+[sys] SYS_MAP_NODE(size=8192, flags=0) -> node #29, va=0x40108000, 2 page(s)
+  B: 0x40108000..0x4010a000 (8192 bytes, 2 page(s))
+  B: memset + verified 8192 bytes of 0x55
+  A: still intact after B-writes — allocations are disjoint.
+mmap: OK — 40960 total bytes mapped via SYS_MAP_NODE across 2 allocation(s).
+[user] task #27 SYS_EXIT(0)
+[user] task #27 exited cleanly with code 0
+user task returned 0
+helios> spawn hello
+helios> spawning M31 'hello' — native Rust on helios-std (code #23)
+[user] task #30 mapped 19 regions, entry=0x40000000, satp=0x80000000000807db
+       exec : va=0x40000000 pa=0x807de000 node=23
+       exec : va=0x40001000 pa=0x807df000 node=23
+       exec : va=0x40002000 pa=0x807e0000 node=23
+       exec : va=0x40003000 pa=0x807e1000 node=23
+       exec : va=0x40004000 pa=0x807e2000 node=23
+       exec : va=0x40005000 pa=0x807e3000 node=23
+       exec : va=0x40006000 pa=0x807e4000 node=23
+       exec : va=0x40007000 pa=0x807e5000 node=23
+       exec : va=0x40008000 pa=0x807e6000 node=23
+       exec : va=0x40009000 pa=0x807e7000 node=23
+       exec : va=0x4000a000 pa=0x807e8000 node=23
+       exec : va=0x4000b000 pa=0x807e9000 node=23
+       exec : va=0x4000c000 pa=0x807ea000 node=23
+       exec : va=0x4000d000 pa=0x807eb000 node=23
+       exec : va=0x4000e000 pa=0x807ec000 node=23
+       exec : va=0x4000f000 pa=0x807ed000 node=23
+       exec : va=0x40010000 pa=0x807ee000 node=23
+       exec : va=0x40011000 pa=0x807ef000 node=23
+       stack: va=0x401ff000 pa=0x807f0000 (R/W/U)
+hello from rust userspace!
+my id is #30
+[sys] SYS_LIST_EDGES(src=30, buf_va=0x401ffd98, max=32)
+my 2 outgoing edges:
+  -> #23 [exec]
+  -> #30 [traverse]
+[sys] SYS_READ_NODE(node=1, buf_va=0x401ffb80, len=16)
+[user] capability violation: task #30 tried to read node 1 (no edge)
+read_node(#1) refused with EPERM — caps work.
+(helios-std heap: 32 / 65536 bytes used)
+[user] task #30 SYS_EXIT(0)
+[user] task #30 exited cleanly with code 0
+user task returned 0
+helios> spawn ls 1
+helios> spawning M32 'ls' — traverse-cap to #1 (code #24)
+[user] task #31 mapped 19 regions, entry=0x40000000, satp=0x80000000000807f1
+       exec : va=0x40000000 pa=0x807f4000 node=24
+       exec : va=0x40001000 pa=0x807f5000 node=24
+       exec : va=0x40002000 pa=0x807f6000 node=24
+       exec : va=0x40003000 pa=0x807f7000 node=24
+       exec : va=0x40004000 pa=0x807f8000 node=24
+       exec : va=0x40005000 pa=0x807f9000 node=24
+       exec : va=0x40006000 pa=0x807fa000 node=24
+       exec : va=0x40007000 pa=0x807fb000 node=24
+       exec : va=0x40008000 pa=0x807fc000 node=24
+       exec : va=0x40009000 pa=0x807fd000 node=24
+       exec : va=0x4000a000 pa=0x807fe000 node=24
+       exec : va=0x4000b000 pa=0x807ff000 node=24
+       exec : va=0x4000c000 pa=0x80800000 node=24
+       exec : va=0x4000d000 pa=0x80801000 node=24
+       exec : va=0x4000e000 pa=0x80802000 node=24
+       exec : va=0x4000f000 pa=0x80803000 node=24
+       exec : va=0x40010000 pa=0x80804000 node=24
+       exec : va=0x40011000 pa=0x80805000 node=24
+       stack: va=0x401ff000 pa=0x80806000 (R/W/U)
+ls #1
+[sys] SYS_LIST_EDGES(src=1, buf_va=0x401ffda8, max=32)
+  21 edges:
+    ? -> #2
+    ? -> #3
+    ? -> #9
+    ? -> #11
+    ? -> #12
+    ? -> #13
+    ? -> #15
+    ? -> #16
+    ? -> #17
+    ? -> #18
+    ? -> #19
+    ? -> #20
+    ? -> #21
+    ? -> #22
+    ? -> #23
+    ? -> #24
+    ? -> #25
+    ? -> #26
+    ? -> #27
+    ? -> #30
+    ? -> #31
+  (cap: read=0 write=0 exec=0 traverse=0 other=21)
+[user] task #31 SYS_EXIT(0)
+[user] task #31 exited cleanly with code 0
+user task returned 0
+helios> spawn mmap
+helios> spawning M33 'mmap' — SYS_MAP_NODE dynamic memory (code #26)
+[user] task #32 mapped 19 regions, entry=0x40000000, satp=0x8000000000080807
+       exec : va=0x40000000 pa=0x8080a000 node=26
+       exec : va=0x40001000 pa=0x8080b000 node=26
+       exec : va=0x40002000 pa=0x8080c000 node=26
+       exec : va=0x40003000 pa=0x8080d000 node=26
+       exec : va=0x40004000 pa=0x8080e000 node=26
+       exec : va=0x40005000 pa=0x8080f000 node=26
+       exec : va=0x40006000 pa=0x80810000 node=26
+       exec : va=0x40007000 pa=0x80811000 node=26
+       exec : va=0x40008000 pa=0x80812000 node=26
+       exec : va=0x40009000 pa=0x80813000 node=26
+       exec : va=0x4000a000 pa=0x80814000 node=26
+       exec : va=0x4000b000 pa=0x80815000 node=26
+       exec : va=0x4000c000 pa=0x80816000 node=26
+       exec : va=0x4000d000 pa=0x80817000 node=26
+       exec : va=0x4000e000 pa=0x80818000 node=26
+       exec : va=0x4000f000 pa=0x80819000 node=26
+       exec : va=0x40010000 pa=0x8081a000 node=26
+       exec : va=0x40011000 pa=0x8081b000 node=26
+       stack: va=0x401ff000 pa=0x8081c000 (R/W/U)
+mmap: exercising SYS_MAP_NODE
+[sys] SYS_MAP_NODE(size=32768, flags=0) -> node #33, va=0x40100000, 8 page(s)
+  A: 0x40100000..0x40108000 (32768 bytes, 8 page(s))
+  A: filled + verified 8192 words of 0xabcdef01
+[sys] SYS_MAP_NODE(size=8192, flags=0) -> node #34, va=0x40108000, 2 page(s)
+  B: 0x40108000..0x4010a000 (8192 bytes, 2 page(s))
+  B: memset + verified 8192 bytes of 0x55
+  A: still intact after B-writes — allocations are disjoint.
+mmap: OK — 40960 total bytes mapped via SYS_MAP_NODE across 2 allocation(s).
+[user] task #32 SYS_EXIT(0)
+[user] task #32 exited cleanly with code 0
+user task returned 0
+helios> /tmp/run-helios.sh: line 15: 54849 Done                    ( sleep 3; printf 'spawn mmap\n'; sleep 10; printf 'spawn hello\n'; sleep 10; printf 'spawn ls 1\n'; sleep 8; printf 'spawn mmap\n'; sleep 10 )
+     54850 Killed: 9               | qemu-system-riscv64 -machine virt -nographic -bios default -serial mon:stdio -drive file=/tmp/helios-m33.img,format=raw,if=none,id=hd0 -device virtio-blk-device,drive=hd0 -netdev user,id=net0,hostfwd=tcp::5556-:80 -device virtio-net-device,netdev=net0 -global virtio-mmio.force-legacy=false -kernel target/riscv64gc-unknown-none-elf/release/helios 2>&1

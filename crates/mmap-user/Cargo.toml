@@ -1,0 +1,13 @@
+[package]
+name = "mmap-user"
+version = "0.1.0"
+edition = "2021"
+description = "SYS_MAP_NODE demo — request dynamic memory from the kernel (M33)"
+build = "build.rs"
+
+[[bin]]
+name = "mmap-user"
+path = "src/main.rs"
+
+[dependencies]
+helios-std = { path = "../helios-std" }

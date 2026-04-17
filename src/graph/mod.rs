@@ -29,6 +29,11 @@ pub enum NodeType {
     Directory,
     Computed,
     Channel,
+    /// Anonymous writable memory granted to a user task via
+    /// `SYS_MAP_NODE` (M33). Backed by frames mapped into the task's
+    /// data-VA window; the node itself is a graph citizen like any
+    /// other, so delegation / introspection stay thesis-aligned.
+    Memory,
 }
 
 impl NodeType {
@@ -41,6 +46,7 @@ impl NodeType {
             "dir" => Some(NodeType::Directory),
             "computed" | "comp" => Some(NodeType::Computed),
             "channel" => Some(NodeType::Channel),
+            "memory" | "mem" => Some(NodeType::Memory),
             _ => None,
         }
     }
@@ -56,6 +62,7 @@ impl fmt::Display for NodeType {
             NodeType::Directory => write!(f, "dir"),
             NodeType::Computed => write!(f, "computed"),
             NodeType::Channel => write!(f, "channel"),
+            NodeType::Memory => write!(f, "memory"),
         }
     }
 }

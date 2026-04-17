@@ -30,13 +30,13 @@ Every Helios-native Rust program links `helios-std` as its primary dependency. T
 
 **Shipped in M31** (see `crates/helios-std/`):
 
-- **Raw syscall bindings** (`helios_std::sys`) — `syscall0/1/2/3` + per-syscall wrappers for the M30 ABI (`SYS_READ_NODE`, `SYS_WRITE_NODE`, `SYS_LIST_EDGES`, `SYS_FOLLOW_EDGE`, `SYS_SELF`, `SYS_PRINT`, `SYS_EXIT`).
-- **Typed graph primitives** (`helios_std::graph`) — `NodeId` newtype, `Label` enum (`Read`/`Write`/`Exec`/`Traverse`/`Unknown(u8)`; aliased as `LabelKind` to match the doc vocabulary), `EdgeInfo` struct (aliased as `Edge`), `Errno` (`Perm`/`NotFound`/`Invalid`/`Other`). Wrappers: `read_node`, `write_node`, `list_edges` (returns `Vec<Edge>`), `list_edges_into` (zero-alloc variant), `follow_edge` — all returning `Result<_, Errno>`.
+- **Raw syscall bindings** (`helios_std::sys`) — `syscall0/1/2/3` + per-syscall wrappers for the M30 + M33 ABI (`SYS_READ_NODE`, `SYS_WRITE_NODE`, `SYS_LIST_EDGES`, `SYS_FOLLOW_EDGE`, `SYS_SELF`, `SYS_PRINT`, `SYS_EXIT`, `SYS_MAP_NODE`).
+- **Typed graph primitives** (`helios_std::graph`) — `NodeId` newtype, `Label` enum (`Read`/`Write`/`Exec`/`Traverse`/`Unknown(u8)`; aliased as `LabelKind` to match the doc vocabulary), `EdgeInfo` struct (aliased as `Edge`), `Errno` (`Perm`/`NotFound`/`Invalid`/`NoMem`/`Other`). Wrappers: `read_node`, `write_node`, `list_edges` (returns `Vec<Edge>`), `list_edges_into` (zero-alloc variant), `follow_edge`, plus M33's `map_node` (returns `NonNull<u8>`) and `map_node_slice` (returns `&'static mut [u8]`) — all returning `Result<_, Errno>`.
 - **I/O** (`helios_std::io`) — `print` / `println` byte-oriented helpers + `Stdout` implementing `core::fmt::Write`; plus `#[macro_export] macro_rules! println` so user code gets the familiar syntax. Output goes through `SYS_PRINT` (UART today, framebuffer/net later when capped).
 - **Task primitives** (`helios_std::task`) — `self_id()` (via `SYS_SELF`), `exit(code)` (via `SYS_EXIT`), `args()` returning the two `usize` values the kernel passed at entry (M31 stand-in for proper `argv`/`env`).
-- **Global allocator** (`helios_std::heap`) — a 64 KiB bump allocator backing `alloc::String` / `alloc::Vec` / `alloc::format!`. The arena lives *inside the binary image* (in `.data.helios_heap`), because the kernel currently maps exec edges as R+W+X and no `SYS_MAP_NODE`-style page-granting syscall exists yet. No free; lifetime is the task.
+- **Global allocator** (`helios_std::heap`) — a 64 KiB bump allocator backing `alloc::String` / `alloc::Vec` / `alloc::format!`. The arena still lives *inside the binary image* (in `.data.helios_heap`) in M33; M33 added `SYS_MAP_NODE` but did not yet reroute `GlobalAlloc` through it. For now, bulk dynamic memory goes through `graph::map_node` directly (see `crates/mmap-user/`); the bump heap remains task-local. No free; lifetime is the task.
 - **Runtime glue** — the `helios_entry!` macro expands to `_start` (placed in `.text.entry` via linker script so it lands at `0x4000_0000`) which stashes the kernel-passed `a0`/`a1`, calls `main()`, and `SYS_EXIT(0)` on return. Also emits a `#[panic_handler]` that prints the panic message and `SYS_EXIT(1)`.
-- **Prelude** (`helios_std::prelude`) — one-stop glob import: `NodeId`, `Edge`, `EdgeInfo`, `Label`, `LabelKind`, `Errno`, `self_id`, `exit`, `read_node`, `write_node`, `list_edges`, `follow_edge`, `print`, `println`, plus `alloc::{Box, String, Vec, format, vec}`.
+- **Prelude** (`helios_std::prelude`) — one-stop glob import: `NodeId`, `Edge`, `EdgeInfo`, `Label`, `LabelKind`, `Errno`, `self_id`, `exit`, `read_node`, `write_node`, `list_edges`, `follow_edge`, `map_node`, `map_node_slice`, `print`, `println`, plus `alloc::{Box, String, Vec, format, vec}`.
 
 First consumer: `crates/hello-user/` (`spawn hello` in the shell), a ~72 KiB native-Rust user binary that prints, self-introspects via `list_edges`, deliberately trips `Errno::Perm` on an unauthorised `read_node`, and shows the heap high-water mark — proving every piece of the stack lights up end-to-end.
 
@@ -59,12 +59,13 @@ Cons:
 - Crates that use `std::fs` / `std::process` / `std::net` can't be consumed as-is (bridge via Strategy B or C if needed)
 - Unfamiliar to Rust developers who expect `std`
 
-#### M31 caveats — stopgaps that follow-on milestones will lift
+#### M31 / M33 caveats — stopgaps that follow-on milestones will lift
 
-- **Bump allocator inside the binary.** Until a `SYS_MAP_NODE`-style syscall exists, the heap lives in the user image's `.data` section. That means (a) 64 KiB arena cap, (b) no free, (c) a long-lived task eventually exhausts its heap. First follow-on: add a `SYS_MAP_NODE` that grants a zeroed page under a newly-created `write` edge, and swap the bump allocator for a real free-list.
+- **Bump allocator inside the binary — for now.** M33 shipped `SYS_MAP_NODE` (and `graph::map_node` / `map_node_slice` on top), so user programs that want bulk dynamic memory no longer have to carry it in their image. What M33 did *not* do: reroute the helios-std `GlobalAlloc` through the syscall. The 64 KiB arena in `.data.helios_heap` still backs `alloc::*`; a task doing a lot of `Vec::push` will still exhaust that arena before `map_node`-backed regions get used. The obvious refactor — shrink the in-binary arena to 4 KiB, chain `map_node(64 KiB)` slabs on demand — is deferred so M33 stayed scoped to "ship the primitive, prove it works, unblock downstream milestones".
+- **No free on `map_node` regions.** A region dies with the task — the kernel removes the `Memory` node on exit but does not reclaim the frames. `SYS_UNMAP_NODE` is an obvious follow-on but not in M33.
 - **W^X waived at the task level.** The kernel currently maps exec edges as R+W+X+U because the Rust binary's `.data` lives in the same image as its `.text`. Cross-task caps remain strictly MMU-enforced (no edge → no mapping). A future "split image" approach — one `text` edge for `.text`/`.rodata`, one `rwdata` edge for `.data`/`.bss` — can restore W^X without asking the linker to know the boundary.
 - **No argv / no env.** Tasks receive two `usize` registers (`a0`, `a1`) at entry — accessible via `helios_std::task::args()`. A graph-native "spawn context" (a node whose edges describe what the task should operate on) is the right long-term answer; M31 ships the minimal stand-in.
-- **`list_edges` ceiling of 256 entries per call.** The kernel has no offset/continuation argument yet, so a node with more edges is silently truncated. A paged variant is tracked with the `SYS_MAP_NODE` work.
+- **`list_edges` ceiling of 256 entries per call.** The kernel has no offset/continuation argument yet, so a node with more edges is silently truncated. A paged variant is tracked for a future syscall-ABI pass.
 - **Static TLS, signals, threads: not there.** U-mode is still single-hart, single-task. No thread API in helios-std yet.
 
 #### Cargo ergonomics (what actually lands on disk)
@@ -240,4 +241,4 @@ About 70 KB on disk, most of which is the bump-heap arena.
 
 ---
 
-*Last reviewed: 2026-04-17 (post-M32 graph-native Rust tools — `ls-user` and `cat-user` shipped). Revisit once `SYS_MAP_NODE` lets the bump allocator leave the binary image, and again once cap delegation + CDT lands.*
+*Last reviewed: 2026-04-17 (post-M33 `SYS_MAP_NODE` — `graph::map_node` + `mmap-user` demo shipped; `GlobalAlloc` refactor still pending). Revisit once the bump allocator is rerouted through `map_node`, and again once cap delegation + CDT lands.*
