@@ -3,10 +3,10 @@
 //! This crate is what you link against instead of `libc` when targeting
 //! Helios. It exposes the kernel's graph-capability ABI as typed Rust:
 //!
-//! - [`sys`] — raw `ecall` wrappers for the 8 Helios syscalls
+//! - [`sys`] — raw `ecall` wrappers for the 9 Helios syscalls
 //!   (`SYS_READ_NODE`, `SYS_WRITE_NODE`, `SYS_LIST_EDGES`,
 //!   `SYS_FOLLOW_EDGE`, `SYS_SELF`, `SYS_PRINT`, `SYS_EXIT`,
-//!   `SYS_MAP_NODE`).
+//!   `SYS_MAP_NODE`, `SYS_READ_EDGE_LABEL`).
 //! - [`graph`] — typed primitives: [`NodeId`][graph::NodeId],
 //!   [`Label`][graph::Label] (alias: [`LabelKind`][graph::LabelKind]),
 //!   [`Edge`][graph::Edge], plus wrappers that return

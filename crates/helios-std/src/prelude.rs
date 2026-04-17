@@ -32,8 +32,8 @@
 //! output.
 
 pub use crate::graph::{
-    follow_edge, list_edges, list_edges_into, map_node, map_node_slice, read_node, write_node,
-    Edge, EdgeInfo, Errno, Label, LabelKind, NodeId,
+    follow_edge, list_edges, list_edges_into, map_node, map_node_slice, read_edge_label,
+    read_edge_label_into, read_node, write_node, Edge, EdgeInfo, Errno, Label, LabelKind, NodeId,
 };
 pub use crate::io::Stdout;
 pub use crate::task::{args, exit, self_id};

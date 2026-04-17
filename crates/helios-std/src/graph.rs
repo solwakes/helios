@@ -6,6 +6,7 @@
 //! capabilities. A task can only touch the nodes its outgoing edges
 //! reach.
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::sys;
@@ -300,6 +301,105 @@ pub fn follow_edge(src: NodeId, label: &str) -> Result<NodeId, Errno> {
         Err(Errno::from_raw(r))
     } else {
         Ok(NodeId(r as u64))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// M34: SYS_READ_EDGE_LABEL — full UTF-8 label for an edge.
+// ---------------------------------------------------------------------------
+
+/// Initial stack-buffer size used by [`read_edge_label`]. Most structural
+/// labels (`child`, `parent`, `self`, `read`, `write`, `exec`,
+/// `traverse`) fit comfortably under 32 bytes; the retry path handles
+/// anything longer.
+const READ_EDGE_LABEL_STACK: usize = 32;
+
+/// Ceiling on the retry path's heap buffer, to bound pathological growth
+/// if the kernel ever reports a huge label. 4 KiB is ~80 cache lines,
+/// still one page — far more than any real label.
+const READ_EDGE_LABEL_MAX: usize = 4096;
+
+/// Read the full string label of the edge at `edge_index` in `src`'s
+/// outgoing edge list, returning it as an owned [`String`].
+///
+/// [`list_edges`] reports edges as a cap-kind byte (`read`/`write`/
+/// `exec`/`traverse`/`Unknown`) — structural labels like `child`,
+/// `parent`, `self`, or anything else the graph carries show up as
+/// [`Label::Unknown`]. Use this function to recover the actual label
+/// string when you need it.
+///
+/// Indexing matches [`list_edges`] / [`list_edges_into`] (graph
+/// insertion order).
+///
+/// Cap: requires a `traverse` edge from the caller to `src` — exactly
+/// the same cap [`list_edges`] already required, so if the edge came
+/// back from a successful `list_edges` call this will never return
+/// [`Errno::Perm`] for cap reasons.
+///
+/// # Errors
+///
+/// - [`Errno::Perm`] — caller lacks a `traverse` edge to `src`.
+/// - [`Errno::NotFound`] — `src` is missing, or `edge_index` is out of
+///   range for that node.
+/// - [`Errno::Invalid`] — a pathological label longer than
+///   [`READ_EDGE_LABEL_MAX`] bytes (shouldn't happen in practice) or
+///   a kernel-bounds-check failure (caller bug).
+pub fn read_edge_label(src: NodeId, edge_index: usize) -> Result<String, Errno> {
+    // Fast path: try a stack buffer first.
+    let mut stack = [0u8; READ_EDGE_LABEL_STACK];
+    match read_edge_label_into(src, edge_index, &mut stack) {
+        Ok(n) => {
+            // SAFETY: kernel stores UTF-8 strings; from_utf8_lossy
+            // tolerates corruption without panicking.
+            return Ok(String::from_utf8_lossy(&stack[..n]).into_owned());
+        }
+        Err(Errno::Invalid) => {
+            // Could be "buf too small" (retry with bigger) or a true
+            // EINVAL. Fall through to the heap retry; if the heap
+            // attempt also returns Invalid, surface it to the caller.
+        }
+        Err(e) => return Err(e),
+    }
+
+    // Retry path: grow until the kernel accepts or we blow the cap.
+    let mut cap = READ_EDGE_LABEL_STACK * 4;
+    while cap <= READ_EDGE_LABEL_MAX {
+        let mut heap = alloc::vec![0u8; cap];
+        match read_edge_label_into(src, edge_index, &mut heap) {
+            Ok(n) => {
+                heap.truncate(n);
+                return Ok(String::from_utf8_lossy(&heap).into_owned());
+            }
+            Err(Errno::Invalid) => {
+                cap *= 2;
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(Errno::Invalid)
+}
+
+/// Read the edge label into a caller-provided byte buffer. Returns the
+/// number of bytes written.
+///
+/// Zero-allocation variant of [`read_edge_label`]. Useful when the
+/// caller already knows an upper bound (or is running inside allocator
+/// code). If `buf.len()` is shorter than the kernel-side label,
+/// returns [`Errno::Invalid`] and the caller should retry with a
+/// larger buffer; no bytes are written in that case.
+pub fn read_edge_label_into(
+    src: NodeId,
+    edge_index: usize,
+    buf: &mut [u8],
+) -> Result<usize, Errno> {
+    let r = unsafe {
+        sys::sys_read_edge_label(src.0, edge_index, buf.as_mut_ptr(), buf.len())
+    };
+    if r < 0 {
+        Err(Errno::from_raw(r))
+    } else {
+        Ok(r as usize)
     }
 }
 

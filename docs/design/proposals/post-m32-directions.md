@@ -1,6 +1,6 @@
 # Post-M32 Directions
 
-*Status: Partially shipped. Written 2026-04-17 after M31 + M32 shipped overnight. Proposal A was implemented as M33 later the same day (see the "Shipped in M33" note below). Proposals B and C are still on the table.*
+*Status: Partially shipped. Written 2026-04-17 after M31 + M32 shipped overnight. Proposal A was implemented as M33 later the same day (see the "Shipped in M33" note below); Proposal B (sub-option B.2) shipped as M34 the same day (see the "Shipped in M34" note under Proposal B). Proposal C is still on the table.*
 
 ## Context
 
@@ -82,6 +82,29 @@ SYS_MAP_NODE (8)
 - Need to decide what happens when a task exits with `SYS_MAP_NODE` nodes dangling. Recommend: task exit walks the task's outgoing `write` edges to Memory-type nodes, deletes them + their frames. Explicit in the code; not magical.
 
 ### Proposal B: `LIST_EDGES` label strings
+
+> **Shipped in M34 (sub-option B.2).** Added `SYS_READ_EDGE_LABEL`
+> (syscall 9) — the append-only variant. `SYS_LIST_EDGES` kept its
+> 16-byte-per-entry ABI; callers that want the structural label string
+> issue one follow-up syscall per edge. helios-std exposes
+> `graph::read_edge_label(src, idx) -> Result<String, Errno>` (with
+> a zero-alloc `read_edge_label_into` companion). `ls-user` now calls
+> it on `Label::Unknown` edges and prints the actual string
+> (`child`, `parent`, …) instead of the `?` placeholder.
+>
+> B.2 won over B.1 for three reasons, all validated during the ship:
+>
+> 1. Append-only — no kernel or helios-std binary breakage, all M33
+>    callers (`who`, `explorer`) Just Keep Working.
+> 2. Pay-as-you-go — `who` and `explorer` never needed the string, so
+>    they pay nothing. Only `ls` issues the extra syscalls.
+> 3. Future-proofed without locking in a format — if the N+1 cost ever
+>    bites, a `SYS_LIST_EDGES_V2` can widen the entry later; the
+>    current ABI stays valid.
+>
+> The full rationale + edge cases (buffer-growth retry, indexing
+> stability, cap surface) live in `docs/design/capability-edges.md`
+> under "M34 Implementation Notes".
 
 **Goal:** `ls` can print `child`, `parent`, etc. instead of `?` for structural edges.
 

@@ -65,8 +65,22 @@ fn main() {
             // recognised label is "traverse" (8 chars). Unknown labels
             // print as "?" so we never widen unpredictably.
             println!("  {} edge{}:", edges.len(), if edges.len() == 1 { "" } else { "s" });
-            for e in &edges {
-                println!("    {:<9} -> {}", e.label, e.target);
+            for (i, e) in edges.iter().enumerate() {
+                // M34: SYS_LIST_EDGES only reports cap-kind (read/write/
+                // exec/traverse/unknown). Structural labels like `child`,
+                // `parent`, `self` all come back as Unknown. For those
+                // we issue a second syscall (SYS_READ_EDGE_LABEL) to
+                // fetch the full string. On error we fall back to `?`.
+                match e.label {
+                    Label::Unknown(_) => {
+                        let name = read_edge_label(target, i)
+                            .unwrap_or_else(|_| String::from("?"));
+                        println!("    {:<9} -> {}", name, e.target);
+                    }
+                    _ => {
+                        println!("    {:<9} -> {}", e.label, e.target);
+                    }
+                }
             }
 
             // Tally kinds — useful when enumerating dense nodes.

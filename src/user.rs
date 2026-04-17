@@ -74,6 +74,13 @@ pub const SYS_SELF: usize = 7;
 /// edge from the caller to the new node, and maps the frames into the
 /// caller's data VA window. Returns the user VA of the first page.
 pub const SYS_MAP_NODE: usize = 8;
+// M34 addition:
+/// Read the full string label of an outgoing edge by index. Closes the
+/// "everything shows as ?" gap in `SYS_LIST_EDGES`, which only surfaces
+/// cap-kind bytes — structural labels like `child` / `parent` / `self`
+/// were reported as Unknown. Cap: same `traverse` edge the caller
+/// already needs for `SYS_LIST_EDGES`.
+pub const SYS_READ_EDGE_LABEL: usize = 9;
 
 // Negative error codes (two's complement of Linux-style errno).
 const EPERM: i64 = -1;
@@ -1654,6 +1661,14 @@ pub fn handle_syscall(frame: &mut TrapFrame) {
             let r = sys_map_node(size, flags);
             frame.set_a0(r as usize);
         }
+        SYS_READ_EDGE_LABEL => {
+            let src = frame.a0() as u64;
+            let edge_index = frame.a1();
+            let buf_va = frame.a2();
+            let buf_len = frame.a3();
+            let r = sys_read_edge_label(src, edge_index, buf_va, buf_len);
+            frame.set_a0(r as usize);
+        }
         _ => {
             crate::println!("[user] unknown syscall #{}", nr);
             frame.set_a0(EINVAL as usize);
@@ -1918,6 +1933,90 @@ fn sys_list_edges(src: u64, buf_va: usize, max_entries: usize) -> i64 {
     }
 
     entries.len() as i64
+}
+
+// ---------------------------------------------------------------------------
+// M34: SYS_READ_EDGE_LABEL — read an edge's full string label by index.
+//
+// SYS_LIST_EDGES only returns the cap-kind byte per edge (read/write/
+// exec/traverse/unknown). Structural edges like `child`/`parent`/`self`
+// all come back as Unknown, so `spawn ls 1` prints `?` for all 18 root
+// outgoing edges even though the graph holds meaningful label strings.
+//
+// This syscall closes that gap: given a source node id and the 0-based
+// index of one of its outgoing edges (same ordering as LIST_EDGES, which
+// is the graph's `Vec<Edge>` insertion order), copy the label's UTF-8
+// bytes into a user buffer and return the byte count. No NUL
+// termination — helios-std is responsible for interpreting the bytes
+// as a str.
+//
+// Cap check: `traverse` from caller → src, exactly the same cap
+// LIST_EDGES requires. This keeps the cap surface minimum: "if you
+// could see the edge's target + kind, you can see its label".
+//
+// Failure modes and errno:
+//   - no `traverse` edge                   → -EPERM
+//   - user buf fails bounds check          → -EINVAL
+//   - src node doesn't exist               → -ENOENT
+//   - edge_index >= node.edges.len()       → -ENOENT
+//   - buf_len < label.len()                → -EINVAL
+//     (caller can retry with a bigger buffer)
+// ---------------------------------------------------------------------------
+
+fn sys_read_edge_label(
+    src: u64,
+    edge_index: usize,
+    buf_va: usize,
+    buf_len: usize,
+) -> i64 {
+    crate::println!(
+        "[sys] SYS_READ_EDGE_LABEL(src={}, idx={}, buf_va={:#x}, len={})",
+        src, edge_index, buf_va, buf_len,
+    );
+
+    if !has_cap(src, "traverse") {
+        let task_id = active().map(|a| a.task_node_id).unwrap_or(0);
+        crate::println!(
+            "[user] capability violation: task #{} tried to READ_EDGE_LABEL on node {} (no `traverse` edge)",
+            task_id, src
+        );
+        return EPERM;
+    }
+
+    if !user_buf_ok(buf_va, buf_len) {
+        return EINVAL;
+    }
+
+    // Snapshot the label bytes under the graph borrow, then release
+    // before touching user memory.
+    let label_bytes: alloc::vec::Vec<u8> = {
+        let g = graph::get();
+        let node = match g.get_node(src) {
+            Some(n) => n,
+            None => return ENOENT,
+        };
+        let edge = match node.edges.get(edge_index) {
+            Some(e) => e,
+            None => return ENOENT,
+        };
+        edge.label.as_bytes().to_vec()
+    };
+
+    if buf_len < label_bytes.len() {
+        // Caller's buffer is too small to hold the full label. Tell them
+        // so they can retry with a larger buffer; don't truncate.
+        return EINVAL;
+    }
+
+    // SUM is set, bounds are verified: direct write into user memory.
+    unsafe {
+        let p = buf_va as *mut u8;
+        for (i, b) in label_bytes.iter().enumerate() {
+            core::ptr::write_volatile(p.add(i), *b);
+        }
+    }
+
+    label_bytes.len() as i64
 }
 
 // ---------------------------------------------------------------------------

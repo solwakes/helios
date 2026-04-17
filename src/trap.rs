@@ -51,6 +51,7 @@ impl TrapFrame {
     #[inline] pub fn a0(&self) -> usize { self.regs[10] }
     #[inline] pub fn a1(&self) -> usize { self.regs[11] }
     #[inline] pub fn a2(&self) -> usize { self.regs[12] }
+    #[inline] pub fn a3(&self) -> usize { self.regs[13] }
     #[inline] pub fn a7(&self) -> usize { self.regs[17] }
     #[inline] pub fn set_a0(&mut self, v: usize) { self.regs[10] = v; }
 }
