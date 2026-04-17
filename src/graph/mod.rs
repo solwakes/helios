@@ -8,6 +8,7 @@ pub mod navigator;
 pub mod persist;
 pub mod query;
 pub mod render;
+pub mod window;
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;

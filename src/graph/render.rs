@@ -516,7 +516,10 @@ pub fn render_navigated(fb: &Framebuffer, graph: &Graph, nav: &NavigatorState) {
     // 10. Store layout positions for mouse hit testing
     save_layout(&nodes);
 
-    // 11. Draw cursor overlay if tablet is active
+    // 11. Draw floating windows (on top of the navigator, below cursor)
+    super::window::render_all(fb);
+
+    // 12. Draw cursor overlay if tablet is active
     let cur = crate::virtio::tablet::cursor();
     crate::framebuffer::draw_cursor(fb, cur.x, cur.y);
 

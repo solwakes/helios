@@ -112,6 +112,10 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
     // Initialize cooperative multitasking (creates task #0 = shell)
     task::init();
 
+    // Boot demo: windowize a few reactive system nodes so the user sees
+    // the window manager working right out of the gate.
+    graph::window::boot_demo_windows();
+
     // Start the interactive shell
     shell::init();
 

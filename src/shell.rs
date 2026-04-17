@@ -178,8 +178,14 @@ pub fn process_tablet_events() {
     let cur = tablet::cursor();
     let moved = cur.moved;
     let clicked = cur.left_clicked;
+    let pressed = cur.left_pressed;
 
     if !moved && !clicked {
+        // If a drag was in flight and the button was released, end it.
+        let wm = crate::graph::window::get_mut();
+        if wm.is_dragging() && !pressed {
+            wm.end_drag();
+        }
         return;
     }
 
@@ -192,7 +198,64 @@ pub fn process_tablet_events() {
 
     unsafe {
         if NAV_MODE {
-            // In navigator mode: handle mouse hover and click
+            // --- Window manager first ----------------------------------
+            let wm = crate::graph::window::get_mut();
+
+            // If a drag is in progress, follow the cursor, or end drag on release.
+            if wm.is_dragging() {
+                if !pressed {
+                    wm.end_drag();
+                    // Repaint to clean up any drag artifacts.
+                    crate::graph::live::refresh_system_nodes();
+                    navigator::render_nav();
+                    return;
+                }
+                if moved {
+                    let changed = wm.update_drag(cx as i32, cy as i32);
+                    if changed {
+                        // Repaint (windows only live on the navigator view).
+                        crate::graph::live::refresh_system_nodes();
+                        navigator::render_nav();
+                    }
+                }
+                return;
+            }
+
+            // Clicks: window close / title drag / body focus
+            if clicked {
+                if let Some(close_id) = wm.hit_close(cx as i32, cy as i32) {
+                    wm.close(close_id);
+                    crate::graph::live::refresh_system_nodes();
+                    navigator::render_nav();
+                    return;
+                }
+                if let Some((hit_id, on_title)) = wm.hit_test(cx as i32, cy as i32) {
+                    wm.focus(hit_id);
+                    if on_title {
+                        wm.begin_drag(hit_id, cx as i32, cy as i32);
+                    }
+                    crate::graph::live::refresh_system_nodes();
+                    navigator::render_nav();
+                    return;
+                }
+                // else: fall through to graph navigator click
+            }
+
+            if moved {
+                // A moved-only event over a window: just redraw the cursor,
+                // don't repaint the whole screen. But if the hover is on a
+                // graph node (i.e. not on a window), do the existing hover.
+                if wm.hit_test(cx as i32, cy as i32).is_some() {
+                    if let Some(fb) = crate::framebuffer::get() {
+                        crate::framebuffer::undraw_cursor(fb);
+                        crate::framebuffer::draw_cursor(fb, cx, cy);
+                    }
+                    return;
+                }
+                // Otherwise fall through to navigator hover logic.
+            }
+
+            // --- Graph navigator behavior (no window was clicked/hovered) --
             let mut need_render = false;
 
             // Hit test against last layout
@@ -412,6 +475,9 @@ fn execute(line: &str) {
         "edit" => cmd_edit(arg1),
         // Console commands
         "tty" | "console" => cmd_tty(),
+        // Window manager
+        "window" | "win" => cmd_window(arg1),
+        "windows" => cmd_windows(),
         // DOOM
         "doom" => crate::doom::start(),
         _ => {
@@ -465,6 +531,9 @@ fn cmd_help() {
     crate::println!("Display commands:");
     crate::println!("  tty           - switch framebuffer to text console");
     crate::println!("  render | nav  - enter graph navigator");
+    crate::println!("Window manager:");
+    crate::println!("  window <id>   - toggle windowed mode for a node");
+    crate::println!("  windows       - list all open windows");
 }
 
 fn cmd_info() {
@@ -1227,6 +1296,75 @@ fn cmd_ipc() {
             preview.replace('\n', " | ")
         };
         crate::println!("{:>4}  {:<16} {:<6} {}", id, name, msgs, display);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Window manager commands
+// ---------------------------------------------------------------------------
+
+fn cmd_window(id_str: &str) {
+    let id = match parse_u64(id_str) {
+        Some(v) => v,
+        None => {
+            crate::println!("Usage: window <node_id>");
+            return;
+        }
+    };
+
+    // Verify the node exists before windowizing.
+    {
+        let g = crate::graph::get();
+        if g.get_node(id).is_none() {
+            crate::println!("Node #{} not found", id);
+            return;
+        }
+    }
+
+    // Place new windows at staggered positions so they don't stack up.
+    let wm = crate::graph::window::get_mut();
+    let count = wm.windows.len() as i32;
+    let base_x = 80 + (count * 30).rem_euclid(400);
+    let base_y = 150 + (count * 30).rem_euclid(300);
+
+    let opened = crate::graph::window::toggle_window(id, base_x, base_y);
+    if opened {
+        crate::println!("Windowized node #{}", id);
+    } else {
+        crate::println!("Closed window for node #{}", id);
+    }
+
+    // Refresh the navigator if we are in it.
+    if crate::framebuffer::get().is_some() {
+        crate::graph::live::refresh_system_nodes();
+        crate::graph::navigator::render_nav();
+    }
+}
+
+fn cmd_windows() {
+    let wm = crate::graph::window::get();
+    if wm.windows.is_empty() {
+        crate::println!("No windows open.");
+        return;
+    }
+    let g = crate::graph::get();
+    crate::println!("{:>4}  {:<16} {:<9} {:>4} {:>4} {:>4} {:>4} {:>3} {}",
+        "node", "name", "state", "x", "y", "w", "h", "z", "");
+    // Print in z-order (ascending; focused window is last/highest).
+    let mut indices: alloc::vec::Vec<usize> = (0..wm.windows.len()).collect();
+    indices.sort_by_key(|&i| wm.windows[i].z);
+    for i in indices {
+        let w = &wm.windows[i];
+        let focused = wm.focused == Some(w.node_id);
+        let name = g.get_node(w.node_id).map(|n| n.name.as_str()).unwrap_or("?");
+        crate::println!(
+            "{:>4}  {:<16} {:<9} {:>4} {:>4} {:>4} {:>4} {:>3} {}",
+            w.node_id,
+            name,
+            if focused { "focused" } else { "bg" },
+            w.x, w.y, w.w, w.h, w.z,
+            if focused { "*" } else { "" }
+        );
     }
 }
 
