@@ -193,4 +193,4 @@ Design conversations that happen only in chat get lost. **The repo is source of 
 
 ---
 
-*Last reviewed: 2026-04-16 (post-M30 expanded syscall ABI).*
+*Last reviewed: 2026-04-17 (post-M31 helios-std landing).*

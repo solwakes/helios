@@ -86,7 +86,7 @@ Boot HART MEDELEG           : 0x0000000000f4b509
 [virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
 [virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
 [virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
-[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
 [virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
 [blk] Found block device @ 0x10008000 (version 2)
 [virtio] Queue 0: max=1024, using=16
@@ -99,7 +99,7 @@ Boot HART MEDELEG           : 0x0000000000f4b509
 [virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
 [virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
 [virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
-[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
 [virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
 [virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
 [virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
@@ -107,7 +107,7 @@ Boot HART MEDELEG           : 0x0000000000f4b509
 [virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
 [virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
 [virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
-[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
 [virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
 [virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
 [virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
@@ -115,7 +115,7 @@ Boot HART MEDELEG           : 0x0000000000f4b509
 [virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
 [virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
 [virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
-[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
 [virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
 [virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
 [virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
@@ -123,7 +123,7 @@ Boot HART MEDELEG           : 0x0000000000f4b509
 [virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
 [virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
 [virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
-[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
 [virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
 [tablet] No VirtIO tablet found
 [virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
@@ -132,7 +132,7 @@ Boot HART MEDELEG           : 0x0000000000f4b509
 [virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
 [virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
 [virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
-[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
 [virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
 [input] No VirtIO keyboard found
 [virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
@@ -141,9 +141,13 @@ Boot HART MEDELEG           : 0x0000000000f4b509
 [virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
 [virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
 [virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
-[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
-[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
-[net] No VirtIO net device found
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[net] Found net device @ 0x10007000 (version 2)
+[virtio] Device features: lo=0x30bf8024 hi=0x00000101
+[virtio] Queue 0: max=1024, using=16
+[virtio] Queue 1: max=1024, using=16
+[net] Device ready, rxq size=16, txq size=16, bufs=16/16
+[net] VirtIO net initialized, MAC=52:54:00:12:34:56
 [fb] Initialising ramfb framebuffer...
 [ramfb] fw_cfg device verified (QEMU signature OK)
 [ramfb] etc/ramfb not found — is -device ramfb enabled?
@@ -153,75 +157,39 @@ Boot HART MEDELEG           : 0x0000000000f4b509
 
 [boot] Helios kernel initialized successfully.
 
-[ipc] IPC subsystem initialized (channels under node #10)
-[user] /user subgraph ready (node #11)
+[ipc] IPC subsystem initialized (channels under node #11)
+[user] /user subgraph ready (node #12)
 [task] Preemptive multitasking initialized (task #0 = shell)
-[user] demo nodes ready: demo=#14 (64B) bad=#15 (32B) text=#16
-[user] M30 demos: who=#17 (208B) explorer=#18 (352B) editor=#19 (512B) naughty=#20 (288B) scratch=#21
-[user] M31 native Rust: hello=#22 (72328 B)
+[user] demo nodes ready: demo=#15 (64B) bad=#16 (32B) text=#17
+[user] M30 demos: who=#18 (208B) explorer=#19 (352B) editor=#20 (512B) naughty=#21 (288B) scratch=#22
+[user] M31 native Rust: hello=#23 (72328 B)
 helios> spawn hello
-helios> spawning M31 'hello' — native Rust on helios-std (code #22)
-[user] task #23 mapped 19 regions, entry=0x40000000, satp=0x800000000008073d
-       exec : va=0x40000000 pa=0x80740000 node=22
-       exec : va=0x40001000 pa=0x80741000 node=22
-       exec : va=0x40002000 pa=0x80742000 node=22
-       exec : va=0x40003000 pa=0x80743000 node=22
-       exec : va=0x40004000 pa=0x80744000 node=22
-       exec : va=0x40005000 pa=0x80746000 node=22
-       exec : va=0x40006000 pa=0x80747000 node=22
-       exec : va=0x40007000 pa=0x80748000 node=22
-       exec : va=0x40008000 pa=0x80749000 node=22
-       exec : va=0x40009000 pa=0x8074a000 node=22
-       exec : va=0x4000a000 pa=0x8074b000 node=22
-       exec : va=0x4000b000 pa=0x8074c000 node=22
-       exec : va=0x4000c000 pa=0x8074d000 node=22
-       exec : va=0x4000d000 pa=0x8074e000 node=22
-       exec : va=0x4000e000 pa=0x8074f000 node=22
-       exec : va=0x4000f000 pa=0x80750000 node=22
-       exec : va=0x40010000 pa=0x80751000 node=22
-       exec : va=0x40011000 pa=0x80752000 node=22
-       stack: va=0x401ff000 pa=0x80753000 (R/W/U)
-hello from rust userspace!
-my id is #23
-[sys] SYS_LIST_EDGES(src=23, buf_va=0x401ffd98, max=32)
-my 2 outgoing edges:
-  -> #22 [exec]
-  -> #23 [traverse]
-[sys] SYS_READ_NODE(node=1, buf_va=0x401ffb80, len=16)
-[user] capability violation: task #23 tried to read node 1 (no edge)
-read_node(#1) refused with EPERM — caps work.
-(helios-std heap: 32 / 65536 bytes used)
-[user] task #23 SYS_EXIT(0)
-[user] task #23 exited cleanly with code 0
-user task returned 0
-helios> 
-helios> spawn hello
-helios> spawning M31 'hello' — native Rust on helios-std (code #22)
-[user] task #24 mapped 19 regions, entry=0x40000000, satp=0x8000000000080745
-       exec : va=0x40000000 pa=0x80756000 node=22
-       exec : va=0x40001000 pa=0x80757000 node=22
-       exec : va=0x40002000 pa=0x80758000 node=22
-       exec : va=0x40003000 pa=0x80759000 node=22
-       exec : va=0x40004000 pa=0x8075a000 node=22
-       exec : va=0x40005000 pa=0x8075c000 node=22
-       exec : va=0x40006000 pa=0x8075d000 node=22
-       exec : va=0x40007000 pa=0x8075e000 node=22
-       exec : va=0x40008000 pa=0x8075f000 node=22
-       exec : va=0x40009000 pa=0x80760000 node=22
-       exec : va=0x4000a000 pa=0x80761000 node=22
-       exec : va=0x4000b000 pa=0x80762000 node=22
-       exec : va=0x4000c000 pa=0x80763000 node=22
-       exec : va=0x4000d000 pa=0x80764000 node=22
-       exec : va=0x4000e000 pa=0x80765000 node=22
-       exec : va=0x4000f000 pa=0x80766000 node=22
-       exec : va=0x40010000 pa=0x80767000 node=22
-       exec : va=0x40011000 pa=0x80768000 node=22
-       stack: va=0x401ff000 pa=0x80769000 (R/W/U)
+helios> spawning M31 'hello' — native Rust on helios-std (code #23)
+[user] task #24 mapped 19 regions, entry=0x40000000, satp=0x8000000000080750
+       exec : va=0x40000000 pa=0x80753000 node=23
+       exec : va=0x40001000 pa=0x80754000 node=23
+       exec : va=0x40002000 pa=0x80755000 node=23
+       exec : va=0x40003000 pa=0x80756000 node=23
+       exec : va=0x40004000 pa=0x80757000 node=23
+       exec : va=0x40005000 pa=0x80758000 node=23
+       exec : va=0x40006000 pa=0x80759000 node=23
+       exec : va=0x40007000 pa=0x8075a000 node=23
+       exec : va=0x40008000 pa=0x8075b000 node=23
+       exec : va=0x40009000 pa=0x8075c000 node=23
+       exec : va=0x4000a000 pa=0x8075d000 node=23
+       exec : va=0x4000b000 pa=0x8075e000 node=23
+       exec : va=0x4000c000 pa=0x8075f000 node=23
+       exec : va=0x4000d000 pa=0x80760000 node=23
+       exec : va=0x4000e000 pa=0x80761000 node=23
+       exec : va=0x4000f000 pa=0x80762000 node=23
+       exec : va=0x40010000 pa=0x80763000 node=23
+       exec : va=0x40011000 pa=0x80764000 node=23
+       stack: va=0x401ff000 pa=0x80765000 (R/W/U)
 hello from rust userspace!
 my id is #24
 [sys] SYS_LIST_EDGES(src=24, buf_va=0x401ffd98, max=32)
 my 2 outgoing edges:
-  -> #22 [exec]
+  -> #23 [exec]
   -> #24 [traverse]
 [sys] SYS_READ_NODE(node=1, buf_va=0x401ffb80, len=16)
 [user] capability violation: task #24 tried to read node 1 (no edge)
@@ -230,15 +198,48 @@ read_node(#1) refused with EPERM — caps work.
 [user] task #24 SYS_EXIT(0)
 [user] task #24 exited cleanly with code 0
 user task returned 0
-helios> 
-helios> spawn who
-helios> spawning M30 'who' demo (SYS_SELF + SYS_PRINT)
-[user] task #25 mapped 2 regions, entry=0x40000000, satp=0x800000000008076a
-       exec : va=0x40000000 pa=0x8076d000 node=17
-       stack: va=0x401ff000 pa=0x8076e000 (R/W/U)
-i am task #25
+helios> spawn hello
+helios> spawning M31 'hello' — native Rust on helios-std (code #23)
+[user] task #25 mapped 19 regions, entry=0x40000000, satp=0x8000000000080766
+       exec : va=0x40000000 pa=0x80769000 node=23
+       exec : va=0x40001000 pa=0x8076a000 node=23
+       exec : va=0x40002000 pa=0x8076b000 node=23
+       exec : va=0x40003000 pa=0x8076c000 node=23
+       exec : va=0x40004000 pa=0x8076d000 node=23
+       exec : va=0x40005000 pa=0x8076e000 node=23
+       exec : va=0x40006000 pa=0x8076f000 node=23
+       exec : va=0x40007000 pa=0x80770000 node=23
+       exec : va=0x40008000 pa=0x80771000 node=23
+       exec : va=0x40009000 pa=0x80772000 node=23
+       exec : va=0x4000a000 pa=0x80773000 node=23
+       exec : va=0x4000b000 pa=0x80774000 node=23
+       exec : va=0x4000c000 pa=0x80775000 node=23
+       exec : va=0x4000d000 pa=0x80776000 node=23
+       exec : va=0x4000e000 pa=0x80777000 node=23
+       exec : va=0x4000f000 pa=0x80778000 node=23
+       exec : va=0x40010000 pa=0x80779000 node=23
+       exec : va=0x40011000 pa=0x8077a000 node=23
+       stack: va=0x401ff000 pa=0x8077b000 (R/W/U)
+hello from rust userspace!
+my id is #25
+[sys] SYS_LIST_EDGES(src=25, buf_va=0x401ffd98, max=32)
+my 2 outgoing edges:
+  -> #23 [exec]
+  -> #25 [traverse]
+[sys] SYS_READ_NODE(node=1, buf_va=0x401ffb80, len=16)
+[user] capability violation: task #25 tried to read node 1 (no edge)
+read_node(#1) refused with EPERM — caps work.
+(helios-std heap: 32 / 65536 bytes used)
 [user] task #25 SYS_EXIT(0)
 [user] task #25 exited cleanly with code 0
 user task returned 0
-helios> 
+helios> spawn who
+helios> spawning M30 'who' demo (SYS_SELF + SYS_PRINT)
+[user] task #26 mapped 2 regions, entry=0x40000000, satp=0x800000000008077c
+       exec : va=0x40000000 pa=0x8077f000 node=18
+       stack: va=0x401ff000 pa=0x80780000 (R/W/U)
+i am task #26
+[user] task #26 SYS_EXIT(0)
+[user] task #26 exited cleanly with code 0
+user task returned 0
 helios> 
