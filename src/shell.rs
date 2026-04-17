@@ -1428,10 +1428,18 @@ fn cmd_spawn(name: &str, arg: &str) {
             crate::println!("ls-user-code not initialized");
             return;
         }
+        // Resolve the target node id:
+        //   - no arg (or arg == "0") → default to node 1 (graph root)
+        //   - numeric arg → use as-is
+        //   - anything else → reject
+        // Keeping "0" synonymous with "default" matches `ls-user`'s own
+        // `if a0 == 0 { NodeId(1) } else { NodeId(a0) }` fallback; the
+        // task gets the `traverse` cap on the same id we pass in a0,
+        // so there's no cap/target mismatch when U-mode starts.
         let target: u64 = if arg.is_empty() {
             1
         } else if let Some(n) = parse_usize(arg) {
-            n as u64
+            if n == 0 { 1 } else { n as u64 }
         } else {
             crate::println!("ls: bad node id '{}'", arg);
             return;
