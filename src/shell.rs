@@ -484,6 +484,7 @@ fn execute(line: &str) {
         "ping" => cmd_ping(arg1),
         "net" | "netstat" => cmd_netstat(),
         "arp" => cmd_arp(arg1),
+        "tcp" => cmd_tcp(arg1, arg2, arg3),
         _ => {
             crate::println!("Unknown command: {}", cmd);
             crate::println!("Type 'help' for available commands.");
@@ -542,6 +543,9 @@ fn cmd_help() {
     crate::println!("  net           - show net interface status");
     crate::println!("  ping <ip>     - ICMP echo to an IP (e.g. ping 10.0.2.2)");
     crate::println!("  arp [ip]      - show ARP cache, or resolve an IP");
+    crate::println!("  tcp listen <port>          - open a TCP listener (blocks until key)");
+    crate::println!("  tcp connect <ip> <port>    - TCP active open (sends 'hello\\n')");
+    crate::println!("  tcp stats                  - show TCP state & stats");
 }
 
 fn cmd_info() {
@@ -1577,4 +1581,224 @@ fn cmd_ping(arg: &str) {
     let loss = if sent > 0 { ((sent - recv) * 100) / sent } else { 0 };
     crate::println!("{} packets transmitted, {} received, {}% packet loss",
         sent, recv, loss);
+}
+
+// ─── TCP commands ───────────────────────────────────────────────────────────
+
+fn cmd_tcp(sub: &str, arg1: &str, arg2: &str) {
+    match sub {
+        "listen" => cmd_tcp_listen(arg1),
+        "connect" => cmd_tcp_connect(arg1, arg2),
+        "stats" => cmd_tcp_stats(),
+        "" => {
+            crate::println!("Usage:");
+            crate::println!("  tcp listen <port>");
+            crate::println!("  tcp connect <a.b.c.d> <port>");
+            crate::println!("  tcp stats");
+        }
+        _ => {
+            crate::println!("Unknown tcp subcommand: {}", sub);
+            crate::println!("Try: tcp listen <port> | tcp connect <ip> <port> | tcp stats");
+        }
+    }
+}
+
+fn cmd_tcp_listen(port_str: &str) {
+    if !crate::virtio::net::is_present() {
+        crate::println!("No network device.");
+        return;
+    }
+    let port = match port_str.parse::<u16>() {
+        Ok(p) if p > 0 => p,
+        _ => {
+            crate::println!("Usage: tcp listen <port>");
+            return;
+        }
+    };
+    let handle = match crate::net::tcp::tcp_listen(port) {
+        Some(h) => h,
+        None => {
+            crate::println!("tcp: could not listen on {} (port in use or table full)", port);
+            return;
+        }
+    };
+    crate::println!("listening on port {}. Press any key to stop.", port);
+
+    // Track active accepted sockets so we can drain data.
+    let mut active: alloc::vec::Vec<usize> = alloc::vec::Vec::new();
+    let mut rxbuf = [0u8; 1024];
+
+    loop {
+        // Check for user keypress — exits the listen loop.
+        if let Some(byte) = crate::uart::getc() {
+            let _ = byte;
+            break;
+        }
+
+        // Poll net
+        crate::virtio::net::poll();
+        crate::net::tcp::tick();
+
+        // Accept new connections.
+        while let Some(sock_idx) = crate::net::tcp::accept(handle) {
+            if let Some((ip, port_r)) = crate::net::tcp::socket_peer(sock_idx) {
+                crate::println!(
+                    "[accept] new connection from {}.{}.{}.{}:{} (socket #{})",
+                    ip[0], ip[1], ip[2], ip[3], port_r, sock_idx
+                );
+            }
+            active.push(sock_idx);
+        }
+
+        // Drain data from active sockets.
+        let mut i = 0;
+        while i < active.len() {
+            let sock_idx = active[i];
+            let state = crate::net::tcp::socket_state(sock_idx);
+            let mut keep = true;
+            match crate::net::tcp::recv(sock_idx, &mut rxbuf) {
+                Some(0) => {
+                    crate::println!("[close] socket #{} closed by peer", sock_idx);
+                    crate::net::tcp::close(sock_idx);
+                    keep = false;
+                }
+                Some(n) => {
+                    let s = match core::str::from_utf8(&rxbuf[..n]) {
+                        Ok(s) => alloc::string::String::from(s),
+                        Err(_) => alloc::format!("<{} bytes binary>", n),
+                    };
+                    crate::println!("[recv sock #{}] {:?}", sock_idx, s);
+                    // Echo back + a newline for trivial test
+                    let echo = alloc::format!("helios-echo: {}", s);
+                    let sent = crate::net::tcp::send(sock_idx, echo.as_bytes());
+                    let _ = sent;
+                    // Update graph node
+                    crate::net::tcp::update_socket_node(sock_idx);
+                }
+                None => {
+                    // No data. Check if the socket was RST/freed.
+                    if state.is_none() {
+                        keep = false;
+                    }
+                }
+            }
+            if !keep {
+                active.swap_remove(i);
+            } else {
+                i += 1;
+            }
+        }
+
+        core::hint::spin_loop();
+    }
+
+    // Close everything cleanly.
+    for sock_idx in &active {
+        crate::net::tcp::close(*sock_idx);
+    }
+    // Pump briefly to flush FINs.
+    let flush_start = crate::arch::riscv64::read_time();
+    while crate::arch::riscv64::read_time() - flush_start < TIMER_FREQ / 2 {
+        crate::virtio::net::poll();
+        crate::net::tcp::tick();
+        core::hint::spin_loop();
+    }
+    crate::net::tcp::tcp_unlisten(port);
+    crate::println!("stopped listening on port {}.", port);
+}
+
+fn cmd_tcp_connect(ip_str: &str, port_str: &str) {
+    if !crate::virtio::net::is_present() {
+        crate::println!("No network device.");
+        return;
+    }
+    let ip = match parse_ip(ip_str) {
+        Some(i) => i,
+        None => { crate::println!("Usage: tcp connect <a.b.c.d> <port>"); return; }
+    };
+    let port = match port_str.parse::<u16>() {
+        Ok(p) if p > 0 => p,
+        _ => { crate::println!("Usage: tcp connect <a.b.c.d> <port>"); return; }
+    };
+    crate::println!("connecting to {}.{}.{}.{}:{} ...",
+        ip[0], ip[1], ip[2], ip[3], port);
+    let handle = match crate::net::tcp::tcp_connect(ip, port) {
+        Some(h) => h,
+        None => { crate::println!("connect: no ARP / no free socket"); return; }
+    };
+    // Wait up to ~3s for ESTABLISHED.
+    let start = crate::arch::riscv64::read_time();
+    let deadline = start + 3 * TIMER_FREQ;
+    let mut established = false;
+    while crate::arch::riscv64::read_time() < deadline {
+        crate::virtio::net::poll();
+        crate::net::tcp::tick();
+        match crate::net::tcp::socket_state(handle) {
+            Some(crate::net::tcp::State::Established) => { established = true; break; }
+            None => break,
+            _ => {}
+        }
+        core::hint::spin_loop();
+    }
+    if !established {
+        crate::println!("connect: timed out / reset");
+        crate::net::tcp::close(handle);
+        return;
+    }
+    crate::println!("connected (socket #{}). sending 'hello\\n'", handle);
+    crate::net::tcp::send(handle, b"hello\n");
+
+    // Poll for reply / activity ~2s.
+    let start = crate::arch::riscv64::read_time();
+    let deadline = start + 2 * TIMER_FREQ;
+    let mut buf = [0u8; 512];
+    while crate::arch::riscv64::read_time() < deadline {
+        crate::virtio::net::poll();
+        crate::net::tcp::tick();
+        if let Some(n) = crate::net::tcp::recv(handle, &mut buf) {
+            if n > 0 {
+                let s = match core::str::from_utf8(&buf[..n]) {
+                    Ok(s) => alloc::string::String::from(s),
+                    Err(_) => alloc::format!("<{} bytes>", n),
+                };
+                crate::println!("recv: {:?}", s);
+            } else {
+                crate::println!("peer closed");
+                break;
+            }
+        }
+        core::hint::spin_loop();
+    }
+    crate::net::tcp::close(handle);
+    crate::println!("closed.");
+}
+
+fn cmd_tcp_stats() {
+    let s = crate::net::tcp::stats();
+    crate::println!("TCP stats:");
+    crate::println!("  RX segments: {}   TX segments: {}", s.rx_segments, s.tx_segments);
+    crate::println!("  RX bytes:    {}   TX bytes:    {}", s.rx_bytes, s.tx_bytes);
+    crate::println!("  RST rx/tx: {}/{}  retransmits: {}  accepts: {}  closes: {}",
+        s.resets_rx, s.resets_tx, s.retransmits, s.accepts, s.closes);
+    crate::println!("Listeners:");
+    let mut any = false;
+    crate::net::tcp::each_listener(|i, l| {
+        any = true;
+        crate::println!("  [{}] port {}  backlog={}", i, l.port, l.backlog.len());
+    });
+    if !any { crate::println!("  (none)"); }
+    crate::println!("Sockets:");
+    any = false;
+    crate::net::tcp::each_socket(|i, s| {
+        any = true;
+        crate::println!(
+            "  [{}] {}:{} <-> {}.{}.{}.{}:{}  {}  rx={} tx={}",
+            i, "local", s.local_port,
+            s.remote_ip[0], s.remote_ip[1], s.remote_ip[2], s.remote_ip[3],
+            s.remote_port,
+            s.state.as_str(),
+            s.rx_bytes, s.tx_bytes
+        );
+    });
+    if !any { crate::println!("  (none)"); }
 }

@@ -141,8 +141,11 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
         // Poll VirtIO tablet for mouse events
         virtio::tablet::poll();
 
-        // Poll VirtIO net device for received frames (handles ARP/ICMP inline)
+        // Poll VirtIO net device for received frames (handles ARP/ICMP/TCP inline)
         virtio::net::poll();
+
+        // Drive TCP retransmit / timeout logic.
+        net::tcp::tick();
 
         // Process tablet events (cursor movement and clicks in nav mode)
         shell::process_tablet_events();

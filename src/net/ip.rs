@@ -1,10 +1,9 @@
 /// Minimal IPv4 handling — just enough to route ICMP echo.
 
-use super::{eth, icmp, OUR_IP};
+use super::{eth, icmp, tcp, OUR_IP};
 
 pub const IPV4_MIN_HEADER_SIZE: usize = 20;
 pub const PROTO_ICMP: u8 = 1;
-#[allow(dead_code)]
 pub const PROTO_TCP: u8 = 6;
 #[allow(dead_code)]
 pub const PROTO_UDP: u8 = 17;
@@ -64,6 +63,7 @@ pub fn handle(frame: &[u8]) {
 
     match proto {
         PROTO_ICMP => icmp::handle(src_ip, src_mac, payload),
+        PROTO_TCP => tcp::handle(src_ip, src_mac, dst_ip, payload),
         _ => {}
     }
 }
