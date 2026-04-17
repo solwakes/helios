@@ -18,6 +18,8 @@ run: build $(DISK)
 		-serial mon:stdio \
 		-drive file=$(DISK),format=raw,if=none,id=hd0 \
 		-device virtio-blk-device,drive=hd0 \
+		-netdev user,id=net0,hostfwd=tcp::5555-:80 \
+		-device virtio-net-device,netdev=net0 \
 		-global virtio-mmio.force-legacy=false \
 		-kernel $(KERNEL)
 
@@ -31,6 +33,8 @@ run-gui: build $(DISK)
 		-device virtio-tablet-device \
 		-drive file=$(DISK),format=raw,if=none,id=hd0 \
 		-device virtio-blk-device,drive=hd0 \
+		-netdev user,id=net0,hostfwd=tcp::5555-:80 \
+		-device virtio-net-device,netdev=net0 \
 		-global virtio-mmio.force-legacy=false \
 		-kernel $(KERNEL)
 

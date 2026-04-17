@@ -14,6 +14,7 @@ mod ipc;
 #[allow(dead_code)]
 mod memfuncs;
 mod mm;
+mod net;
 mod panic;
 mod ramfb;
 mod shell;
@@ -93,6 +94,12 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
     // Initialize VirtIO keyboard input
     virtio::input::init();
 
+    // Initialize VirtIO network device
+    virtio::net::init();
+
+    // Register net0 node in the graph (if the device exists)
+    net::register_graph_node();
+
     // Initialize framebuffer (ramfb via fw_cfg)
     framebuffer::init();
 
@@ -133,6 +140,9 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
 
         // Poll VirtIO tablet for mouse events
         virtio::tablet::poll();
+
+        // Poll VirtIO net device for received frames (handles ARP/ICMP inline)
+        virtio::net::poll();
 
         // Process tablet events (cursor movement and clicks in nav mode)
         shell::process_tablet_events();

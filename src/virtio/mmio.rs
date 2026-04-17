@@ -170,6 +170,69 @@ impl VirtioMmio {
         }
     }
 
+    /// Run init with explicit feature negotiation for features bits [0..63].
+    /// `driver_features_lo` is bits 0..31, `driver_features_hi` is bits 32..63.
+    /// Returns true if the device accepted the features.
+    pub fn init_device_with_features(
+        &self,
+        driver_features_lo: u32,
+        driver_features_hi: u32,
+    ) -> bool {
+        // Reset
+        self.write32(STATUS, 0);
+        // Acknowledge
+        self.write32(STATUS, STATUS_ACK);
+        // Driver
+        self.write32(STATUS, STATUS_ACK | STATUS_DRIVER);
+
+        if self.version >= 2 {
+            // Read device features
+            self.write32(DEVICE_FEATURES_SEL, 0);
+            let dev_lo = self.read32(DEVICE_FEATURES);
+            self.write32(DEVICE_FEATURES_SEL, 1);
+            let dev_hi = self.read32(DEVICE_FEATURES);
+            crate::println!(
+                "[virtio] Device features: lo={:#010x} hi={:#010x}",
+                dev_lo, dev_hi
+            );
+
+            // Write driver features
+            self.write32(DRIVER_FEATURES_SEL, 0);
+            self.write32(DRIVER_FEATURES, driver_features_lo & dev_lo);
+            self.write32(DRIVER_FEATURES_SEL, 1);
+            self.write32(DRIVER_FEATURES, driver_features_hi & dev_hi);
+
+            self.write32(
+                STATUS,
+                STATUS_ACK | STATUS_DRIVER | STATUS_FEATURES_OK,
+            );
+            let s = self.read32(STATUS);
+            if s & STATUS_FEATURES_OK == 0 {
+                crate::println!("[virtio] Device rejected features!");
+                self.write32(STATUS, STATUS_FAILED);
+                return false;
+            }
+            true
+        } else {
+            // Legacy
+            self.write32(GUEST_PAGE_SIZE, 4096);
+
+            self.write32(DEVICE_FEATURES_SEL, 0);
+            let dev_lo = self.read32(DEVICE_FEATURES);
+            self.write32(DRIVER_FEATURES_SEL, 0);
+            self.write32(DRIVER_FEATURES, driver_features_lo & dev_lo);
+
+            self.write32(DEVICE_FEATURES_SEL, 1);
+            let dev_hi = self.read32(DEVICE_FEATURES);
+            self.write32(DRIVER_FEATURES_SEL, 1);
+            self.write32(DRIVER_FEATURES, driver_features_hi & dev_hi);
+
+            self.write32(DEVICE_FEATURES_SEL, 0);
+            self.write32(DRIVER_FEATURES_SEL, 0);
+            true
+        }
+    }
+
     /// Mark the device DRIVER_OK so it starts processing queues.
     pub fn driver_ok(&self) {
         if self.version >= 2 {

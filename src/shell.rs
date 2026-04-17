@@ -480,6 +480,10 @@ fn execute(line: &str) {
         "windows" => cmd_windows(),
         // DOOM
         "doom" => crate::doom::start(),
+        // Network
+        "ping" => cmd_ping(arg1),
+        "net" | "netstat" => cmd_netstat(),
+        "arp" => cmd_arp(arg1),
         _ => {
             crate::println!("Unknown command: {}", cmd);
             crate::println!("Type 'help' for available commands.");
@@ -534,6 +538,10 @@ fn cmd_help() {
     crate::println!("Window manager:");
     crate::println!("  window <id>   - toggle windowed mode for a node");
     crate::println!("  windows       - list all open windows");
+    crate::println!("Network:");
+    crate::println!("  net           - show net interface status");
+    crate::println!("  ping <ip>     - ICMP echo to an IP (e.g. ping 10.0.2.2)");
+    crate::println!("  arp [ip]      - show ARP cache, or resolve an IP");
 }
 
 fn cmd_info() {
@@ -1380,4 +1388,193 @@ fn cmd_peek(id_str: &str) {
         Some(msg) => crate::println!("Channel #{} next message: {}", id, msg),
         None => crate::println!("Channel #{}: empty (or not a channel)", id),
     }
+}
+
+// ─── Network commands ───────────────────────────────────────────────────────
+
+fn parse_ip(s: &str) -> Option<[u8; 4]> {
+    let mut octets = [0u8; 4];
+    let mut i = 0;
+    for part in s.split('.') {
+        if i >= 4 { return None; }
+        octets[i] = part.parse::<u8>().ok()?;
+        i += 1;
+    }
+    if i == 4 { Some(octets) } else { None }
+}
+
+fn cmd_netstat() {
+    if !crate::virtio::net::is_present() {
+        crate::println!("No network device.");
+        return;
+    }
+    crate::net::update_graph_node();
+    let mac = crate::net::our_mac();
+    let s = crate::net::stats();
+    crate::println!("net0: VirtIO network");
+    crate::println!("  MAC:     {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    crate::println!("  IP:      {}.{}.{}.{}",
+        crate::net::OUR_IP[0], crate::net::OUR_IP[1],
+        crate::net::OUR_IP[2], crate::net::OUR_IP[3]);
+    crate::println!("  Gateway: {}.{}.{}.{}",
+        crate::net::GATEWAY_IP[0], crate::net::GATEWAY_IP[1],
+        crate::net::GATEWAY_IP[2], crate::net::GATEWAY_IP[3]);
+    crate::println!("  Netmask: {}.{}.{}.{}",
+        crate::net::NETMASK[0], crate::net::NETMASK[1],
+        crate::net::NETMASK[2], crate::net::NETMASK[3]);
+    crate::println!("  RX: {} frames", s.rx_frames);
+    crate::println!("  TX: {} frames", s.tx_frames);
+    crate::println!("  ARP rx/tx: {}/{}", s.arp_rx, s.arp_tx);
+    crate::println!("  ICMP rx/tx: {}/{}", s.icmp_rx, s.icmp_tx);
+}
+
+fn cmd_arp(arg: &str) {
+    if !crate::virtio::net::is_present() {
+        crate::println!("No network device.");
+        return;
+    }
+    if arg.is_empty() {
+        crate::println!("ARP cache:");
+        for i in 0..8 {
+            unsafe {
+                let e = &crate::net::ARP_CACHE[i];
+                if e.valid {
+                    crate::println!("  {}.{}.{}.{} -> {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                        e.ip[0], e.ip[1], e.ip[2], e.ip[3],
+                        e.mac[0], e.mac[1], e.mac[2], e.mac[3], e.mac[4], e.mac[5]);
+                }
+            }
+        }
+    } else {
+        let ip = match parse_ip(arg) {
+            Some(i) => i,
+            None => { crate::println!("Usage: arp [a.b.c.d]"); return; }
+        };
+        if let Some(mac) = crate::net::arp_lookup(&ip) {
+            crate::println!("  {}.{}.{}.{} -> {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} (cached)",
+                ip[0], ip[1], ip[2], ip[3],
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+            return;
+        }
+        crate::println!("Sending ARP request for {}.{}.{}.{}...", ip[0], ip[1], ip[2], ip[3]);
+        crate::net::arp::send_request(ip);
+        // Wait up to 2 seconds for reply
+        let start = crate::arch::riscv64::read_time();
+        let deadline = start + 2 * TIMER_FREQ;
+        while crate::arch::riscv64::read_time() < deadline {
+            crate::virtio::net::poll();
+            if let Some(mac) = crate::net::arp_lookup(&ip) {
+                crate::println!("  {}.{}.{}.{} -> {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                    ip[0], ip[1], ip[2], ip[3],
+                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                return;
+            }
+            core::hint::spin_loop();
+        }
+        crate::println!("ARP timed out.");
+    }
+}
+
+fn cmd_ping(arg: &str) {
+    if !crate::virtio::net::is_present() {
+        crate::println!("No network device.");
+        return;
+    }
+    let target_ip = match parse_ip(arg) {
+        Some(i) => i,
+        None => { crate::println!("Usage: ping <a.b.c.d>"); return; }
+    };
+
+    // Resolve the next-hop MAC. For destinations outside our /24, use gateway.
+    let same_subnet = target_ip[0] == crate::net::OUR_IP[0]
+        && target_ip[1] == crate::net::OUR_IP[1]
+        && target_ip[2] == crate::net::OUR_IP[2];
+    let next_hop_ip = if same_subnet { target_ip } else { crate::net::GATEWAY_IP };
+
+    let dst_mac = match crate::net::arp_lookup(&next_hop_ip) {
+        Some(m) => m,
+        None => {
+            crate::println!("ARP: resolving {}.{}.{}.{}...",
+                next_hop_ip[0], next_hop_ip[1], next_hop_ip[2], next_hop_ip[3]);
+            crate::net::arp::send_request(next_hop_ip);
+            // Wait up to 2 seconds.
+            let start = crate::arch::riscv64::read_time();
+            let deadline = start + 2 * TIMER_FREQ;
+            loop {
+                if crate::arch::riscv64::read_time() >= deadline {
+                    crate::println!("ARP timeout — cannot resolve next-hop.");
+                    return;
+                }
+                crate::virtio::net::poll();
+                if let Some(m) = crate::net::arp_lookup(&next_hop_ip) {
+                    break m;
+                }
+                core::hint::spin_loop();
+            }
+        }
+    };
+
+    // Send 4 ICMP echo requests, waiting up to 2s each.
+    let ident = 0xB001u16;
+    crate::println!("PING {}.{}.{}.{} (via {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}): 56 data bytes",
+        target_ip[0], target_ip[1], target_ip[2], target_ip[3],
+        dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5]);
+
+    let mut sent = 0u32;
+    let mut recv = 0u32;
+    for seq in 0..4u16 {
+        {
+            let st = crate::net::stats_mut();
+            st.ping_outstanding = true;
+            st.ping_seq = seq;
+            st.ping_ident = ident;
+            st.ping_target_ip = target_ip;
+            st.ping_reply_us = None;
+        }
+        if !crate::net::icmp::send_echo_request(target_ip, dst_mac, ident, seq) {
+            crate::println!("send failed");
+            return;
+        }
+        sent += 1;
+
+        // Wait up to 2 seconds.
+        let start = crate::arch::riscv64::read_time();
+        let deadline = start + 2 * TIMER_FREQ;
+        let mut got_reply = false;
+        while crate::arch::riscv64::read_time() < deadline {
+            crate::virtio::net::poll();
+            let st = crate::net::stats();
+            if !st.ping_outstanding {
+                let us = st.ping_reply_us.unwrap_or(0);
+                let ms = us / 1000;
+                let frac = (us % 1000) / 10; // two digits of fractional ms
+                crate::println!("64 bytes from {}.{}.{}.{}: icmp_seq={} ttl=64 time={}.{:02} ms",
+                    target_ip[0], target_ip[1], target_ip[2], target_ip[3],
+                    seq, ms, frac);
+                recv += 1;
+                got_reply = true;
+                break;
+            }
+            core::hint::spin_loop();
+        }
+        if !got_reply {
+            crate::println!("Request timeout for icmp_seq={}", seq);
+            // Clear outstanding state
+            crate::net::stats_mut().ping_outstanding = false;
+        }
+
+        // Short delay between pings (~0.3s)
+        let pause_start = crate::arch::riscv64::read_time();
+        while crate::arch::riscv64::read_time() - pause_start < TIMER_FREQ / 3 {
+            crate::virtio::net::poll();
+            core::hint::spin_loop();
+        }
+    }
+
+    crate::println!("--- {}.{}.{}.{} ping statistics ---",
+        target_ip[0], target_ip[1], target_ip[2], target_ip[3]);
+    let loss = if sent > 0 { ((sent - recv) * 100) / sent } else { 0 };
+    crate::println!("{} packets transmitted, {} received, {}% packet loss",
+        sent, recv, loss);
 }
