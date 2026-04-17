@@ -8,8 +8,10 @@
 
 pub mod arp;
 pub mod eth;
+pub mod http;
 pub mod icmp;
 pub mod ip;
+pub mod json;
 pub mod tcp;
 
 use crate::virtio::net as vnet;

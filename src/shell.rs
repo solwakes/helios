@@ -485,6 +485,7 @@ fn execute(line: &str) {
         "net" | "netstat" => cmd_netstat(),
         "arp" => cmd_arp(arg1),
         "tcp" => cmd_tcp(arg1, arg2, arg3),
+        "httpd" => cmd_httpd(arg1, arg2),
         _ => {
             crate::println!("Unknown command: {}", cmd);
             crate::println!("Type 'help' for available commands.");
@@ -546,6 +547,9 @@ fn cmd_help() {
     crate::println!("  tcp listen <port>          - open a TCP listener (blocks until key)");
     crate::println!("  tcp connect <ip> <port>    - TCP active open (sends 'hello\\n')");
     crate::println!("  tcp stats                  - show TCP state & stats");
+    crate::println!("  httpd start [port]         - start HTTP server (graph as JSON)");
+    crate::println!("  httpd stop                 - stop HTTP server");
+    crate::println!("  httpd stats                - show HTTP server stats");
 }
 
 fn cmd_info() {
@@ -1801,4 +1805,79 @@ fn cmd_tcp_stats() {
         );
     });
     if !any { crate::println!("  (none)"); }
+}
+
+// ─── HTTP server commands ───────────────────────────────────────────────────
+
+fn cmd_httpd(sub: &str, arg1: &str) {
+    match sub {
+        "start" => cmd_httpd_start(arg1),
+        "stop" => cmd_httpd_stop(),
+        "stats" => cmd_httpd_stats(),
+        "" => {
+            crate::println!("Usage:");
+            crate::println!("  httpd start [port]     - start HTTP server (default port 80)");
+            crate::println!("  httpd stop             - stop HTTP server");
+            crate::println!("  httpd stats            - show request / byte counters");
+        }
+        _ => {
+            crate::println!("Unknown httpd subcommand: {}", sub);
+            crate::println!("Try: httpd start [port] | httpd stop | httpd stats");
+        }
+    }
+}
+
+fn cmd_httpd_start(port_str: &str) {
+    if !crate::virtio::net::is_present() {
+        crate::println!("No network device.");
+        return;
+    }
+    let port: u16 = if port_str.is_empty() {
+        80
+    } else {
+        match port_str.parse::<u16>() {
+            Ok(p) if p > 0 => p,
+            _ => {
+                crate::println!("Usage: httpd start [port]");
+                return;
+            }
+        }
+    };
+    if crate::net::http::is_running() {
+        let p = crate::net::http::server_port().unwrap_or(0);
+        crate::println!("httpd already running on port {}", p);
+        return;
+    }
+    if crate::net::http::start(port) {
+        crate::println!("httpd: serving graph as JSON on port {} (non-blocking)", port);
+        crate::println!("       endpoints: / /ping /stats /nodes /nodes/{{id}} /tree");
+        crate::println!("       shell remains responsive; type 'httpd stats' to see counters");
+    } else {
+        crate::println!("httpd: failed to start on port {} (TCP listener unavailable?)", port);
+    }
+}
+
+fn cmd_httpd_stop() {
+    if !crate::net::http::is_running() {
+        crate::println!("httpd: not running");
+        return;
+    }
+    let port = crate::net::http::server_port().unwrap_or(0);
+    crate::net::http::stop();
+    crate::println!("httpd: stopped (was on port {})", port);
+}
+
+fn cmd_httpd_stats() {
+    let s = crate::net::http::stats();
+    crate::println!("HTTP server stats:");
+    if crate::net::http::is_running() {
+        let p = crate::net::http::server_port().unwrap_or(0);
+        crate::println!("  status:       running on port {}", p);
+    } else {
+        crate::println!("  status:       stopped");
+    }
+    crate::println!("  requests:     {}", s.requests);
+    crate::println!("  bytes out:    {}", s.bytes_out);
+    crate::println!("  404s:         {}", s.not_found);
+    crate::println!("  errors:       {}", s.errors);
 }

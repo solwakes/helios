@@ -147,6 +147,9 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
         // Drive TCP retransmit / timeout logic.
         net::tcp::tick();
 
+        // Drive HTTP server accept / receive / respond.
+        net::http::tick();
+
         // Process tablet events (cursor movement and clicks in nav mode)
         shell::process_tablet_events();
 
