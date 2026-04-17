@@ -527,7 +527,8 @@ fn cmd_help() {
     crate::println!("Task commands:");
     crate::println!("  ps            - list all tasks with preemption stats");
     crate::println!("  spawn <name>  - spawn a demo task (counter, fibonacci, busyloop,");
-    crate::println!("                  producer, consumer, pingpong, userdemo)");
+    crate::println!("                  producer, consumer, pingpong, userdemo, baddemo,");
+    crate::println!("                  who, explorer, editor, naughty [M30])");
     crate::println!("  spawn <id>    - spawn a USER-MODE task from a code node (M29)");
     crate::println!("  kill <id>     - kill a task by ID");
     crate::println!("IPC commands:");
@@ -1299,7 +1300,12 @@ fn cmd_spawn(name: &str) {
         crate::println!("Usage: spawn <name|node_id>");
         crate::println!("  Kernel demos: counter, fibonacci, busyloop, producer, consumer, pingpong");
         crate::println!("  User space:   spawn <code_node_id>  (drops to U-mode with edge-based caps)");
-        crate::println!("                spawn userdemo        (shortcut for the M29 demo)");
+        crate::println!("                spawn userdemo  (M29: read/forbidden demo)");
+        crate::println!("                spawn baddemo   (M29: MMU page-fault demo)");
+        crate::println!("                spawn who       (M30: SYS_SELF)");
+        crate::println!("                spawn explorer  (M30: SYS_LIST_EDGES on self)");
+        crate::println!("                spawn editor    (M30: SYS_WRITE_NODE on scratch)");
+        crate::println!("                spawn naughty   (M30: SYS_WRITE_NODE -> EPERM)");
         return;
     }
     // Shortcut: "spawn userdemo" launches the boot-time demo code node.
@@ -1329,6 +1335,61 @@ fn cmd_spawn(name: &str) {
         crate::println!("user task returned {}", rc);
         return;
     }
+    // M30 demos -------------------------------------------------------
+    if name == "who" {
+        let code_id = crate::user::who_code_id();
+        if code_id == 0 { crate::println!("user-who-code not initialized"); return; }
+        crate::println!("helios> spawning M30 'who' demo (SYS_SELF + SYS_PRINT)");
+        // Self-traverse not needed (no list/follow), but harmless to omit.
+        let rc = crate::user::run_user_task_with_caps(code_id, &[], false, 0, 0);
+        crate::println!("user task returned {}", rc);
+        return;
+    }
+    if name == "explorer" {
+        let code_id = crate::user::explorer_code_id();
+        if code_id == 0 { crate::println!("user-explorer-code not initialized"); return; }
+        crate::println!("helios> spawning M30 'explorer' demo (SYS_LIST_EDGES on self)");
+        // Needs traverse cap to self to enumerate its own edges.
+        let rc = crate::user::run_user_task_with_caps(code_id, &[], true, 0, 0);
+        crate::println!("user task returned {}", rc);
+        return;
+    }
+    if name == "editor" {
+        let code_id = crate::user::editor_code_id();
+        let scratch = crate::user::scratch_id();
+        if code_id == 0 || scratch == 0 {
+            crate::println!("user-editor-code or scratch not initialized");
+            return;
+        }
+        crate::println!("helios> spawning M30 'editor' demo (read+write on scratch #{})", scratch);
+        let rc = crate::user::run_user_task_with_caps(
+            code_id,
+            &[("read", scratch), ("write", scratch)],
+            false,
+            scratch as usize,
+            0,
+        );
+        crate::println!("user task returned {}", rc);
+        return;
+    }
+    if name == "naughty" {
+        let code_id = crate::user::naughty_code_id();
+        let scratch = crate::user::scratch_id();
+        if code_id == 0 || scratch == 0 {
+            crate::println!("user-naughty-code or scratch not initialized");
+            return;
+        }
+        crate::println!("helios> spawning M30 'naughty' demo (read-only on scratch #{}; write will be refused)", scratch);
+        let rc = crate::user::run_user_task_with_caps(
+            code_id,
+            &[("read", scratch)], // NO write edge — sys_write_node will return EPERM
+            false,
+            scratch as usize,
+            0,
+        );
+        crate::println!("user task returned {}", rc);
+        return;
+    }
     // Numeric argument -> treat as a code node id and launch as user task.
     if let Some(id) = parse_usize(name) {
         let code_id = id as u64;
@@ -1354,7 +1415,7 @@ fn cmd_spawn(name: &str) {
         "producer" => crate::task::demo_producer,
         "consumer" => crate::task::demo_consumer,
         _ => {
-            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, or a numeric code node id", name);
+            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, or a numeric code node id", name);
             return;
         }
     };

@@ -1,6 +1,6 @@
 # Capability Edges: Graph-Native Security
 
-*Status: Design committed M28, first implementation M29. This document describes the model; implementation details follow as they land.*
+*Status: Design committed M28, first implementation M29, ABI expanded M30. This document describes the model; implementation details follow as they land.*
 
 ## The Core Idea
 
@@ -53,23 +53,59 @@ The task now sees exactly its permitted view. Any access to memory outside that 
 
 The MMU does the enforcement. The kernel only has to build the right page table.
 
-## Syscall API (M29)
+## Syscall API (M29 + M30)
 
-M29 starts with a minimal ABI:
+The ABI is append-only and numbered; higher numbers were added in later
+milestones. M30 also introduced the `traverse` capability kind.
 
-| Num | Name          | Args                              | Returns                         |
-|-----|---------------|-----------------------------------|---------------------------------|
-| 1   | `READ_NODE`   | `a0`=node_id, `a1`=buf, `a2`=len  | bytes read, or -EPERM / -ENOENT |
-| 2   | `PRINT`       | `a0`=buf, `a1`=len                | 0                               |
-| 3   | `EXIT`        | `a0`=code                         | (no return)                     |
+| Num | Name           | Args                              | Cap check              | Returns                              |
+|-----|----------------|-----------------------------------|------------------------|--------------------------------------|
+| 1   | `READ_NODE`    | `a0`=node_id, `a1`=buf, `a2`=len  | `read` or `write` edge | bytes read, or -EPERM / -ENOENT      |
+| 2   | `PRINT`        | `a0`=buf, `a1`=len                | — (bounds-checked)     | bytes printed                        |
+| 3   | `EXIT`         | `a0`=code                         | —                      | (no return)                          |
+| 4   | `WRITE_NODE`   | `a0`=node_id, `a1`=buf, `a2`=len  | `write` edge           | bytes written, or -EPERM / -ENOENT / -EINVAL |
+| 5   | `LIST_EDGES`   | `a0`=src_id, `a1`=buf, `a2`=max   | `traverse` edge to src | #entries written, or -EPERM / -ENOENT |
+| 6   | `FOLLOW_EDGE`  | `a0`=src_id, `a1`=label, `a2`=len | `traverse` edge to src | target_id, or -EPERM / -ENOENT       |
+| 7   | `SELF`         | —                                 | — (always allowed)     | caller's task node id                |
 
-`READ_NODE` checks the task's outgoing edges for a `read` or `write` labeled edge to the target. If present: copy content. If absent: `-EPERM`.
+### Cap-check kinds
 
-Later milestones will add:
-- `WRITE_NODE`, `APPEND_NODE` (gated on `write` edge)
-- `FOLLOW_EDGE`, `LIST_EDGES` (gated on `traverse` edge)
-- `CREATE_NODE`, `ADD_EDGE` (gated by a task's authority to create — probably another cap)
-- `MAP_NODE` (map target into caller's address space for direct access, avoiding syscall overhead)
+The syscall layer uses a `has_cap(target, label)` helper that scans the
+current task's outgoing edges for an edge with the given label pointing at
+`target`. Four labels are recognised today:
+
+- `read`  — grants `READ_NODE` and is an R-only MMU mapping.
+- `write` — grants `WRITE_NODE`, auto-implies `read`, and is an R/W MMU mapping.
+- `exec`  — grants execution of code from the target, R/X MMU mapping.
+- `traverse` — grants `LIST_EDGES` / `FOLLOW_EDGE` from the target; does
+  NOT map anything into the task's page table (it's a pure-syscall cap).
+
+### LIST_EDGES entry layout (16 bytes each, little-endian)
+
+```
+offset  type    meaning
+ 0      u64     target node id
+ 8      u8      label kind: 0=unknown, 1=read, 2=write, 3=exec, 4=traverse
+ 9      u8[7]   padding (zero)
+```
+
+Entries are returned in the order edges were added to the source node
+(the graph's `Vec<Edge>` iteration order). `FOLLOW_EDGE` also respects
+this order and returns the *first* matching edge.
+
+### Copy-in / copy-out bounds
+
+User-space buffers are verified to lie strictly within the user VA
+window `[0x4000_0000, 0x4020_0000)` before any kernel read/write. SUM is
+already set in `sstatus`, so once the bounds check passes the kernel
+dereferences the pointer directly. Out-of-range buffers → `-EINVAL`.
+
+### Still planned
+
+- `APPEND_NODE` (gated on `write` edge)
+- `CREATE_NODE`, `ADD_EDGE` (gated by a "create"/"grant" cap — pending M31)
+- `MAP_NODE` (map target into caller's address space for direct access,
+  avoiding syscall overhead)
 
 ## Delegation and Revocation
 
@@ -116,12 +152,43 @@ Plan 9's namespaces don't enforce; the file server does. Helios edges are enforc
 
 ## Next Steps (Milestone Map)
 
-- **M29**: Skeleton — one U-mode task, MMU enforcement, 3 syscalls. Cap violation = task kill.
-- **M30**: Expand syscalls (`WRITE_NODE`, `FOLLOW_EDGE`, `LIST_EDGES`).
+- **M29** (done): Skeleton — one U-mode task, MMU enforcement, 3 syscalls. Cap violation = task kill.
+- **M30** (done): Expanded syscall ABI — `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + the `traverse` cap kind. Four new user demos (`who`, `explorer`, `editor`, `naughty`) prove introspection + mutation + refusal all work end-to-end.
 - **M31**: Cap delegation + CDT for revocation.
 - **M32**: Multiple user tasks coexisting.
 - **M33**: Port DOOM to user mode (the litmus test — does the cap model handle a big, real program?).
 
+## M30 Implementation Notes
+
+Things worth knowing for M31 and beyond:
+
+1. **Traverse edges are real graph edges, not a separate table.** The
+   kernel simply iterates the task's outgoing edges and matches by
+   label string. This keeps the thesis intact: everything is in the
+   graph.
+
+2. **Self-traverse is explicit.** If a task wants to introspect its own
+   edges via `LIST_EDGES`, it needs a `traverse` edge pointing at
+   itself. The `explorer` demo gets this at spawn time via
+   `run_user_task_with_caps(... self_traverse = true ...)`. Tasks are
+   NOT born with self-awareness; it's a cap like any other.
+
+3. **Edge order is insertion order.** `Vec<Edge>` in the node store is
+   append-only during edge creation (no re-ordering), so M30's
+   "deterministic order" promise is simply "graph storage order".
+
+4. **`WRITE_NODE` replaces content, it does not append.** The node's
+   `Vec<u8>` is overwritten wholesale. This is the simplest thing that
+   lets the `editor` demo demonstrate "read-modify-write". An explicit
+   `APPEND_NODE` is planned.
+
+5. **Each demo blob is one 4 KiB page, PIC, no M extension.** Inline
+   `global_asm!` in Rust doesn't inherit the `rv64gc` multi-extension
+   set, so the demos use repeated subtraction for decimal itoa rather
+   than `divu`/`remu`. Position independence means only `li`, `mv`,
+   `ecall`, and PC-relative branches — no `la` or absolute references.
+   The user stack at `0x401ff000` is the only writable scratch region.
+
 ---
 
-*Last reviewed: 2026-04-16 (post-M28). Next review after M29 implementation.*
+*Last reviewed: 2026-04-16 (post-M30 ABI expansion). Next review after M31 CDT work.*

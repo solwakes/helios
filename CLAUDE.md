@@ -119,8 +119,9 @@ Single-threaded, polling, `static mut` state. Socket table is 16 slots, listener
 
 See `README.md` for the user-facing list. Current front lines:
 
-- **M29 (in progress):** First U-mode task, MMU cap enforcement, 3 syscalls. This is the pivot to privilege-separation via graph-edge capabilities.
-- **M30+ planned:** Expand syscall ABI, cap delegation with CDT, multiple coexisting user tasks, port DOOM to user mode as the litmus test.
+- **M29 (done):** First U-mode task, MMU cap enforcement, 3 syscalls (`READ_NODE`, `PRINT`, `EXIT`). Pivot to privilege-separation via graph-edge capabilities.
+- **M30 (done):** Expanded syscall ABI — `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + the `traverse` capability kind. Four new demos (`who`, `explorer`, `editor`, `naughty`) prove introspection + mutation + write-cap refusal.
+- **M31+ planned:** Cap delegation with CDT, multiple coexisting user tasks, port DOOM to user mode as the litmus test.
 
 ## Common Gotchas
 
