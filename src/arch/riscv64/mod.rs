@@ -158,6 +158,26 @@ pub fn write_stvec(val: usize) {
     unsafe { core::arch::asm!("csrw stvec, {}", in(reg) val) };
 }
 
+/// Read the `sscratch` CSR.
+#[inline(always)]
+pub fn read_sscratch() -> usize {
+    let val: usize;
+    unsafe { core::arch::asm!("csrr {}, sscratch", out(reg) val) };
+    val
+}
+
+/// Write the `sscratch` CSR.
+#[inline(always)]
+pub fn write_sscratch(val: usize) {
+    unsafe { core::arch::asm!("csrw sscratch, {}", in(reg) val) };
+}
+
+/// Flush instruction cache (`fence.i`).
+#[inline(always)]
+pub fn fence_i() {
+    unsafe { core::arch::asm!("fence.i") };
+}
+
 /// Read the current time via the `rdtime` pseudo-instruction.
 #[inline(always)]
 pub fn read_time() -> usize {

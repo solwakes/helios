@@ -51,11 +51,21 @@ pub struct PageTable {
 // ---------------------------------------------------------------------------
 // Allocation helper — grab a zeroed, page-aligned 4 KiB block from the heap.
 // ---------------------------------------------------------------------------
-fn alloc_page_table() -> &'static mut PageTable {
+pub fn alloc_page_table() -> &'static mut PageTable {
     let layout = Layout::from_size_align(4096, 4096).unwrap();
     let ptr = unsafe { alloc_zeroed(layout) };
     assert!(!ptr.is_null(), "alloc_page_table: out of memory");
     unsafe { &mut *(ptr as *mut PageTable) }
+}
+
+/// Allocate a fresh zeroed, page-aligned 4 KiB frame (e.g. for user
+/// pages) and return its physical address. Since the kernel is identity-
+/// mapped, the kernel VA == PA.
+pub fn alloc_user_frame() -> usize {
+    let layout = Layout::from_size_align(4096, 4096).unwrap();
+    let ptr = unsafe { alloc_zeroed(layout) };
+    assert!(!ptr.is_null(), "alloc_user_frame: out of memory");
+    ptr as usize
 }
 
 // ---------------------------------------------------------------------------

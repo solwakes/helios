@@ -21,6 +21,7 @@ mod shell;
 mod task;
 mod trap;
 mod uart;
+mod user;
 #[allow(dead_code)]
 mod virtio;
 
@@ -121,6 +122,12 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
 
     // Initialize cooperative multitasking (creates task #0 = shell)
     task::init();
+
+    // Initialize the user-space demo (M29): creates the `user-demo-code`
+    // binary node + `user-demo-text` readable node. A task launched via
+    // `spawn <demo_code_id>` gets an exec edge to the code and a read
+    // edge to the text; the shell command then drops to U-mode.
+    user::init();
 
     // Boot demo: windowize a few reactive system nodes so the user sees
     // the window manager working right out of the gate.

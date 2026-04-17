@@ -527,7 +527,8 @@ fn cmd_help() {
     crate::println!("Task commands:");
     crate::println!("  ps            - list all tasks with preemption stats");
     crate::println!("  spawn <name>  - spawn a demo task (counter, fibonacci, busyloop,");
-    crate::println!("                  producer, consumer, pingpong)");
+    crate::println!("                  producer, consumer, pingpong, userdemo)");
+    crate::println!("  spawn <id>    - spawn a USER-MODE task from a code node (M29)");
     crate::println!("  kill <id>     - kill a task by ID");
     crate::println!("IPC commands:");
     crate::println!("  ipc           - list all IPC channels");
@@ -1295,8 +1296,47 @@ fn cmd_ps() {
 
 fn cmd_spawn(name: &str) {
     if name.is_empty() {
-        crate::println!("Usage: spawn <name>");
-        crate::println!("Available: counter, fibonacci, busyloop, producer, consumer, pingpong");
+        crate::println!("Usage: spawn <name|node_id>");
+        crate::println!("  Kernel demos: counter, fibonacci, busyloop, producer, consumer, pingpong");
+        crate::println!("  User space:   spawn <code_node_id>  (drops to U-mode with edge-based caps)");
+        crate::println!("                spawn userdemo        (shortcut for the M29 demo)");
+        return;
+    }
+    // Shortcut: "spawn userdemo" launches the boot-time demo code node.
+    if name == "userdemo" {
+        let code_id = crate::user::demo_code_id();
+        let text_id = crate::user::demo_text_id();
+        if code_id == 0 {
+            crate::println!("user-demo-code not initialized");
+            return;
+        }
+        crate::println!("helios> spawning M29 user-space demo (code #{}, read #{}, forbidden #1)", code_id, text_id);
+        let rc = crate::user::run_user_task_from_code_node(code_id, text_id, 1);
+        crate::println!("user task returned {}", rc);
+        return;
+    }
+    // Shortcut: "spawn baddemo" launches the MMU-violation test (task is
+    // killed by a page fault rather than exiting via SYS_EXIT).
+    if name == "baddemo" {
+        let code_id = crate::user::baddemo_code_id();
+        let text_id = crate::user::demo_text_id();
+        if code_id == 0 {
+            crate::println!("user-baddemo-code not initialized");
+            return;
+        }
+        crate::println!("helios> spawning baddemo — expect MMU page fault and task kill");
+        let rc = crate::user::run_user_task_from_code_node(code_id, text_id, 1);
+        crate::println!("user task returned {}", rc);
+        return;
+    }
+    // Numeric argument -> treat as a code node id and launch as user task.
+    if let Some(id) = parse_usize(name) {
+        let code_id = id as u64;
+        // Use text demo id as the read target; forbidden = root (node 1).
+        let text_id = crate::user::demo_text_id();
+        crate::println!("helios> spawning user task from code node #{} (read #{}, forbidden #1)", code_id, text_id);
+        let rc = crate::user::run_user_task_from_code_node(code_id, text_id, 1);
+        crate::println!("user task returned {}", rc);
         return;
     }
     match name {
@@ -1314,7 +1354,7 @@ fn cmd_spawn(name: &str) {
         "producer" => crate::task::demo_producer,
         "consumer" => crate::task::demo_consumer,
         _ => {
-            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong", name);
+            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, or a numeric code node id", name);
             return;
         }
     };
