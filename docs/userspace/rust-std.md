@@ -240,4 +240,4 @@ About 70 KB on disk, most of which is the bump-heap arena.
 
 ---
 
-*Last reviewed: 2026-04-17 (post-M31 helios-std landing). Revisit after M32 (graph-native tools) and again once `SYS_MAP_NODE` lets the bump allocator leave the binary image.*
+*Last reviewed: 2026-04-17 (post-M32 graph-native Rust tools — `ls-user` and `cat-user` shipped). Revisit once `SYS_MAP_NODE` lets the bump allocator leave the binary image, and again once cap delegation + CDT lands.*

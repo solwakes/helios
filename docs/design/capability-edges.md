@@ -243,4 +243,4 @@ Things the `helios-std` milestone learned, worth preserving:
 
 ---
 
-*Last reviewed: 2026-04-17 (post-M31 helios-std). Next review after M32 CDT/delegation.*
+*Last reviewed: 2026-04-17 (post-M32 graph-native Rust tools: `spawn ls`, `spawn cat`). Next review after M33 CDT/delegation.*
