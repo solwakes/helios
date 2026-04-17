@@ -39,7 +39,8 @@ helios/
 │   ├── hello-user/           ← first native Rust user program (spawn hello)
 │   ├── ls-user/              ← graph-native `ls` (M32) — `spawn ls <id>`
 │   ├── cat-user/             ← graph-native `cat` (M32) — `spawn cat <id>`
-│   └── mmap-user/            ← SYS_MAP_NODE demo (M33) — `spawn mmap`
+│   ├── mmap-user/            ← SYS_MAP_NODE demo (M33) — `spawn mmap`
+│   └── bigalloc-user/        ← GlobalAlloc via SYS_MAP_NODE (M33.5) — `spawn bigalloc`
 ├── docs/                     ← design rationale, kernel docs, userspace
 ├── doom/, doomgeneric/       ← DOOM port (C, linked via FFI)
 ├── screenshots/              ← milestone screenshots + UART transcripts
@@ -122,7 +123,7 @@ Close-after-response, no keep-alive, 4KB request cap, 64KB response cap. Body-re
 
 Single-threaded, polling, `static mut` state. Socket table is 16 slots, listener table is 8 slots. Don't hold references across `tcp::*` calls (the kernel pattern is `drop(s)` before any call that might re-enter SOCKETS).
 
-## Milestone Status (M1–M34 Complete)
+## Milestone Status (M1–M34 + M33.5 Complete)
 
 See `README.md` for the user-facing list. Current front lines:
 
@@ -130,9 +131,10 @@ See `README.md` for the user-facing list. Current front lines:
 - **M30 (done):** Expanded syscall ABI — `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + the `traverse` capability kind. Four new demos (`who`, `explorer`, `editor`, `naughty`) prove introspection + mutation + write-cap refusal.
 - **M31 (done):** `helios-std` — the Rust-native "libc" for Helios user-mode. Raw syscall wrappers (`sys`), typed graph primitives (`NodeId`, `Label`/`LabelKind`, `Edge`/`EdgeInfo`, `Errno`), `print!`/`println!` macros over `SYS_PRINT`, `self_id`/`exit`, a 64 KiB bump allocator for `alloc::*`, and the `helios_entry!` macro that generates `_start` + a panic handler. First native Rust U-mode program lives at `crates/hello-user/`; `spawn hello` runs it. Kernel side: `build.rs` compiles the userspace sub-workspace and embeds the raw binary via `include_bytes!`. Exec edges are now R+W+X (see design notes below) and can span multiple consecutive 4 KiB pages (`USER_CODE_MAX_PAGES = 64`), so real linker-placed Rust binaries sit as one contiguous image at `0x4000_0000`.
 - **M32 (done):** Graph-native Rust tools: `ls <id>` walks a node's outgoing edges (`SYS_LIST_EDGES`) and `cat <id>` reads its content (`SYS_READ_NODE`). Live in `crates/ls-user/` and `crates/cat-user/`, both linked against helios-std. Shell grants the task-specific capability (`traverse` for ls, `read` for cat) at spawn time and passes the target id in `a0` — recovered via `helios_std::task::args()`. This is the M31 ergonomics test: can a 50-line Rust `main()` feel like normal Rust while talking directly to the graph? Yes.
-- **M33 (done):** `SYS_MAP_NODE` (syscall 8) — a U-mode task can request fresh zeroed writable memory. Kernel mints a `NodeType::Memory` node, allocates backing frames, adds a `write` edge from caller → new node, maps the frames into the caller's data VA window as R+W+U. helios-std exposes `graph::map_node` (returns `NonNull<u8>`) and `graph::map_node_slice` (returns `&'static mut [u8]`); `Errno::NoMem` added for the `-ENOMEM` case. Demo at `crates/mmap-user/` (`spawn mmap`) allocates 32 KiB + 8 KiB and verifies disjoint usable regions. The helios-std `GlobalAlloc` has NOT been rerouted through `map_node` yet — that's a follow-on. See `docs/design/capability-edges.md` "M33 Implementation Notes" for the VA-window / cap semantics / task-exit cleanup specifics.
+- **M33 (done):** `SYS_MAP_NODE` (syscall 8) — a U-mode task can request fresh zeroed writable memory. Kernel mints a `NodeType::Memory` node, allocates backing frames, adds a `write` edge from caller → new node, maps the frames into the caller's data VA window as R+W+U. helios-std exposes `graph::map_node` (returns `NonNull<u8>`) and `graph::map_node_slice` (returns `&'static mut [u8]`); `Errno::NoMem` added for the `-ENOMEM` case. Demo at `crates/mmap-user/` (`spawn mmap`) allocates 32 KiB + 8 KiB and verifies disjoint usable regions. See `docs/design/capability-edges.md` "M33 Implementation Notes" for the VA-window / cap semantics / task-exit cleanup specifics.
+- **M33.5 (done):** helios-std's `GlobalAlloc` is now a slab-chained bump allocator backed by `SYS_MAP_NODE` rather than an in-binary 64 KiB arena. First `alloc` call installs a 16 KiB slab via `graph::map_node`; larger requests install a slab sized to fit; old slabs stay live until the kernel reclaims them at task exit (via M33's `mem_node_ids` cleanup). User binaries shrank by ~64 KiB each (`hello-user` went from ~72 KiB to ~7 KiB). No kernel changes — pure user-space follow-on. Demo at `crates/bigalloc-user/` (`spawn bigalloc`) allocates a 16 KiB `Vec<u64>` then a 32 KiB `Vec<u64>` (forcing chaining) and prints `list_edges(self_id())` to show multiple `write` edges to `NodeType::Memory` nodes. Proposal A from `docs/design/proposals/post-m32-directions.md` is now fully closed. See `docs/design/capability-edges.md` "M33.5 Implementation Notes" for the codegen / atomic-ordering / scope-cut notes.
 - **M34 (done):** `SYS_READ_EDGE_LABEL` (syscall 9) — closes the "everything shows as `?`" gap in `SYS_LIST_EDGES`. User programs call it with `(src, edge_idx)` to recover the full UTF-8 label (e.g. `child`, `parent`, `self`) that `LIST_EDGES` only surfaces as kind-byte `unknown`. Append-only ABI (Proposal B.2 from `docs/design/proposals/post-m32-directions.md`) — no existing callers (`who`, `explorer`) broken. helios-std exposes `graph::read_edge_label(src, idx) -> Result<String, Errno>` plus a zero-alloc `read_edge_label_into(src, idx, &mut [u8])`. `ls-user` now prints real labels for structural edges; `spawn ls 1` shows all 19 root-child edges as `child` instead of `?`. See `docs/design/capability-edges.md` "M34 Implementation Notes" for the cap-surface / indexing / buffer-retry rationale.
-- **M35+ planned:** Cap delegation with a capability-derivation tree, multiple coexisting user tasks, reroute `GlobalAlloc` through `map_node`, port DOOM to user mode as the litmus test.
+- **M35+ planned:** Cap delegation with a capability-derivation tree, multiple coexisting user tasks, port DOOM to user mode as the litmus test.
 
 ## Common Gotchas
 
@@ -199,4 +201,4 @@ Design conversations that happen only in chat get lost. **The repo is source of 
 
 ---
 
-*Last reviewed: 2026-04-17 (post-M34 `SYS_READ_EDGE_LABEL`).*
+*Last reviewed: 2026-04-17 (post-M33.5 — helios-std's `GlobalAlloc` rerouted through `SYS_MAP_NODE`).*

@@ -39,9 +39,10 @@ see [`docs/`](docs/) for design rationale and architecture notes:
 - **DOOM** — yes, it runs Doom (cross-compiled C engine, embedded shareware WAD, 2× scaled rendering)
 - **TCP/IP stack + HTTP server** — graph is queryable as JSON over the network (M24–M28)
 - **U-mode user tasks with capability-edge security** — graph edges *are* the capability space, MMU-enforced (M29–M30)
-- **helios-std** — Rust-native userspace library with raw syscall wrappers, typed graph primitives, `println!`, and a bump allocator; first native Rust binary runs as `spawn hello` (M31)
+- **helios-std** — Rust-native userspace library with raw syscall wrappers, typed graph primitives, `println!`, and a slab-chained bump allocator backed by `SYS_MAP_NODE` (M31 + M33.5); first native Rust binary runs as `spawn hello`
 - **graph-native Rust tools** — `spawn ls <id>` walks a node's outgoing edges, `spawn cat <id>` reads a node's content. Built on helios-std; each a few dozen lines of `match` over `Result<_, Errno>`. (M32)
 - **dynamic memory via `SYS_MAP_NODE`** — a U-mode task can request fresh zeroed writable memory at runtime. The kernel mints a `Memory` node, maps backing frames into the task's VA window, and grants a `write` edge from caller → new node. `spawn mmap` allocates 32 KiB + 8 KiB and verifies disjoint usable regions. (M33)
+- **`alloc::*` backed by kernel slabs** — helios-std's `GlobalAlloc` now requests its backing memory from the kernel via `SYS_MAP_NODE` (slab-chained bump allocator) instead of a 64 KiB in-binary arena. Every Rust user binary dropped by ~64 KiB on disk; `Vec` / `String` / `format!` grow by chaining fresh slabs as needed. `spawn bigalloc` allocates 16 KiB + 32 KiB (forcing slab chaining) and verifies the edges appear as `write`-to-Memory-node entries in `list_edges(self_id())`. (M33.5)
 - **full edge labels via `SYS_READ_EDGE_LABEL`** — `SYS_LIST_EDGES` returns a compact cap-kind byte per edge; structural labels like `child` / `parent` show up as `unknown`. A follow-up syscall (same `traverse` cap) copies the full UTF-8 label into a user buffer. `spawn ls 1` now prints `child` for all 19 root outgoing edges instead of `?`. (M34)
 
 ## building
@@ -278,6 +279,7 @@ the graph is the filesystem, the process table, the device tree, and the IPC mec
 | M31 | helios-std — Rust-native userspace library + hello user program | — |
 | M32 | graph-native Rust tools — `spawn ls <id>`, `spawn cat <id>` | — |
 | M33 | `SYS_MAP_NODE` — dynamic user memory via graph-native syscall (`spawn mmap`) | — |
+| M33.5 | helios-std `GlobalAlloc` rerouted through `SYS_MAP_NODE` slabs (`spawn bigalloc`) | — |
 | M34 | `SYS_READ_EDGE_LABEL` — structural edge labels in user-space (`spawn ls 1` shows `child` not `?`) | — |
 
 ## license

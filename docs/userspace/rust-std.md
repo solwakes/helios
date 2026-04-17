@@ -1,6 +1,8 @@
 # Rust on Helios: `std`, Targets, and the Porting Path
 
-*Status: Strategy A (`helios-std`) shipped in M31. Strategies B and C remain future work. Updated 2026-04-17.*
+*Status: Strategy A (`helios-std`) shipped in M31, with the heap
+backed by kernel-granted `SYS_MAP_NODE` slabs as of M33.5. Strategies
+B and C remain future work. Updated 2026-04-17.*
 
 Rust's `core` + `alloc` are OS-independent and port to Helios freely. `std` is the problem: it bakes in POSIX metaphors throughout. This document maps the path from "Rust programs don't run on Helios" to "Rust is a first-class language for Helios software."
 
@@ -34,7 +36,7 @@ Every Helios-native Rust program links `helios-std` as its primary dependency. T
 - **Typed graph primitives** (`helios_std::graph`) — `NodeId` newtype, `Label` enum (`Read`/`Write`/`Exec`/`Traverse`/`Unknown(u8)`; aliased as `LabelKind` to match the doc vocabulary), `EdgeInfo` struct (aliased as `Edge`), `Errno` (`Perm`/`NotFound`/`Invalid`/`NoMem`/`Other`). Wrappers: `read_node`, `write_node`, `list_edges` (returns `Vec<Edge>`), `list_edges_into` (zero-alloc variant), `follow_edge`, plus M33's `map_node` (returns `NonNull<u8>`) and `map_node_slice` (returns `&'static mut [u8]`) — all returning `Result<_, Errno>`.
 - **I/O** (`helios_std::io`) — `print` / `println` byte-oriented helpers + `Stdout` implementing `core::fmt::Write`; plus `#[macro_export] macro_rules! println` so user code gets the familiar syntax. Output goes through `SYS_PRINT` (UART today, framebuffer/net later when capped).
 - **Task primitives** (`helios_std::task`) — `self_id()` (via `SYS_SELF`), `exit(code)` (via `SYS_EXIT`), `args()` returning the two `usize` values the kernel passed at entry (M31 stand-in for proper `argv`/`env`).
-- **Global allocator** (`helios_std::heap`) — a 64 KiB bump allocator backing `alloc::String` / `alloc::Vec` / `alloc::format!`. The arena still lives *inside the binary image* (in `.data.helios_heap`) in M33; M33 added `SYS_MAP_NODE` but did not yet reroute `GlobalAlloc` through it. For now, bulk dynamic memory goes through `graph::map_node` directly (see `crates/mmap-user/`); the bump heap remains task-local. No free; lifetime is the task.
+- **Global allocator** (`helios_std::heap`) — a slab-chained bump allocator backing `alloc::String` / `alloc::Vec` / `alloc::format!`. As of **M33.5**, the allocator requests its backing memory from the kernel via `SYS_MAP_NODE` (first call installs a 16 KiB slab; oversized requests trigger a new slab sized to fit). Slabs are tracked against the task's outgoing `write` edges to `NodeType::Memory` nodes and reclaimed wholesale on task exit. `heap::{used, capacity, slab_count, SLAB_DEFAULT, MAX_SLABS}` expose diagnostics. No per-allocation free (bump semantics); slab lifetime is the task.
 - **Runtime glue** — the `helios_entry!` macro expands to `_start` (placed in `.text.entry` via linker script so it lands at `0x4000_0000`) which stashes the kernel-passed `a0`/`a1`, calls `main()`, and `SYS_EXIT(0)` on return. Also emits a `#[panic_handler]` that prints the panic message and `SYS_EXIT(1)`.
 - **Prelude** (`helios_std::prelude`) — one-stop glob import: `NodeId`, `Edge`, `EdgeInfo`, `Label`, `LabelKind`, `Errno`, `self_id`, `exit`, `read_node`, `write_node`, `list_edges`, `follow_edge`, `map_node`, `map_node_slice`, `print`, `println`, plus `alloc::{Box, String, Vec, format, vec}`.
 
@@ -59,10 +61,43 @@ Cons:
 - Crates that use `std::fs` / `std::process` / `std::net` can't be consumed as-is (bridge via Strategy B or C if needed)
 - Unfamiliar to Rust developers who expect `std`
 
-#### M31 / M33 caveats — stopgaps that follow-on milestones will lift
+#### Heap: backed by `SYS_MAP_NODE` slabs (M33.5)
 
-- **Bump allocator inside the binary — for now.** M33 shipped `SYS_MAP_NODE` (and `graph::map_node` / `map_node_slice` on top), so user programs that want bulk dynamic memory no longer have to carry it in their image. What M33 did *not* do: reroute the helios-std `GlobalAlloc` through the syscall. The 64 KiB arena in `.data.helios_heap` still backs `alloc::*`; a task doing a lot of `Vec::push` will still exhaust that arena before `map_node`-backed regions get used. The obvious refactor — shrink the in-binary arena to 4 KiB, chain `map_node(64 KiB)` slabs on demand — is deferred so M33 stayed scoped to "ship the primitive, prove it works, unblock downstream milestones".
-- **No free on `map_node` regions.** A region dies with the task — the kernel removes the `Memory` node on exit but does not reclaim the frames. `SYS_UNMAP_NODE` is an obvious follow-on but not in M33.
+`helios-std`'s `GlobalAlloc` is a slab-chained bump allocator whose
+backing memory comes from the kernel via `SYS_MAP_NODE`, not from a
+static array inside the binary image.
+
+- **Default slab: 16 KiB.** The first heap allocation in a task
+  triggers `graph::map_node(SLAB_DEFAULT)`; subsequent allocations
+  bump within that slab. When a request doesn't fit, the allocator
+  requests a new slab sized to `max(request, SLAB_DEFAULT)`. Old
+  slabs are abandoned in place (bump = no free per allocation).
+- **Auditable state.** Five `AtomicUsize` slots in
+  `.data.helios_heap` (`CURRENT_BASE`, `CURRENT_END`,
+  `CURRENT_CURSOR`, `SLAB_COUNT`, `PRIOR_BYTES`) plus the
+  `SlabBumpAllocator` ZST. Access is `SeqCst` throughout —
+  single-hart semantics only need `Relaxed`, but earlier experiments
+  with `Relaxed` + LTO cross-function inlining produced stale reads
+  in the fit-retry path. `SeqCst` gives the compiler fences to
+  anchor; the codegen cost is trivial at M33.5 scale.
+- **No bootstrap arena.** `_start` does not allocate (it just stashes
+  entry args via atomics and calls `main`), so the allocator lazy-
+  initialises on first use. Removing the old 64 KiB in-binary arena
+  dropped `hello-user` from ~72 KiB to ~7 KiB on disk.
+- **Data-window constraint.** The per-task data VA window is 16
+  pages (64 KiB) in M33. Total live slab capacity per task is bounded
+  by that. A `map_node` that can't find enough contiguous free slots
+  returns `ENOMEM`; our allocator surfaces that as a null return from
+  `GlobalAlloc::alloc`, and Rust turns that into a panic via
+  `handle_alloc_error`.
+
+Known stopgaps that follow-on milestones will lift:
+
+- **No free on slabs.** Slabs die with the task — the kernel removes
+  the `Memory` node on exit (via the M33 `mem_node_ids` cleanup) but
+  there is no `SYS_UNMAP_NODE` to reclaim them earlier. A free-list
+  or per-allocation freer is deferred; bump-within-slab is the whole
+  semantics today.
 - **W^X waived at the task level.** The kernel currently maps exec edges as R+W+X+U because the Rust binary's `.data` lives in the same image as its `.text`. Cross-task caps remain strictly MMU-enforced (no edge → no mapping). A future "split image" approach — one `text` edge for `.text`/`.rodata`, one `rwdata` edge for `.data`/`.bss` — can restore W^X without asking the linker to know the boundary.
 - **No argv / no env.** Tasks receive two `usize` registers (`a0`, `a1`) at entry — accessible via `helios_std::task::args()`. A graph-native "spawn context" (a node whose edges describe what the task should operate on) is the right long-term answer; M31 ships the minimal stand-in.
 - **`list_edges` ceiling of 256 entries per call.** The kernel has no offset/continuation argument yet, so a node with more edges is silently truncated. A paged variant is tracked for a future syscall-ABI pass.
@@ -241,4 +276,4 @@ About 70 KB on disk, most of which is the bump-heap arena.
 
 ---
 
-*Last reviewed: 2026-04-17 (post-M33 `SYS_MAP_NODE` — `graph::map_node` + `mmap-user` demo shipped; `GlobalAlloc` refactor still pending). Revisit once the bump allocator is rerouted through `map_node`, and again once cap delegation + CDT lands.*
+*Last reviewed: 2026-04-17 (post-M33.5 — `GlobalAlloc` now backed by `SYS_MAP_NODE` slabs; Proposal A from `post-m32-directions.md` is fully closed). Revisit once cap delegation + CDT lands.*

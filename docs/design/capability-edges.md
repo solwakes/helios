@@ -171,7 +171,8 @@ Plan 9's namespaces don't enforce; the file server does. Helios edges are enforc
 - **M30** (done): Expanded syscall ABI — `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + the `traverse` cap kind. Four new user demos (`who`, `explorer`, `editor`, `naughty`) prove introspection + mutation + refusal all work end-to-end.
 - **M31** (done): `helios-std` — the Rust-native userspace library. Typed syscall wrappers (`NodeId`, `Label`, `Errno`, `Edge`), `println!`, bump allocator, `_start`/panic-handler glue via `helios_entry!`. First linker-placed Rust U-mode binary (`hello-user`) runs end-to-end with the cap model: `Errno::Perm` propagates through `Result`, and a deliberate `read_node(root)` refusal is observably handled without killing the task. Kernel side: `build_user_address_space` now maps multi-page exec edges (R+W+X+U — W^X inside a task is waived until a follow-on edge-split; cross-task enforcement is unchanged).
 - **M32** (done): Graph-native Rust tools — `ls <id>` enumerates outgoing edges (`SYS_LIST_EDGES`), `cat <id>` reads node content (`SYS_READ_NODE`). Both live at `crates/ls-user` / `crates/cat-user`, each a few dozen lines of `match` over `Result<_, Errno>`. Shell grants the exact cap each tool needs (`traverse` for `ls`, `read` for `cat`) and passes the target id as the first task arg. Validates that the M31 ergonomics carry through to real tool-shaped programs.
-- **M33** (done): `SYS_MAP_NODE` — kernel-granted anonymous writable memory. Tasks can mint fresh `NodeType::Memory` nodes at runtime; the kernel allocates backing frames, adds a `write` edge from caller → new node (implying `read`), and maps the frames into the task's data-VA window. Demo at `crates/mmap-user/` (`spawn mmap`). The helios-std `GlobalAlloc` backend has *not* been rerouted through `map_node` yet — that's an additive refactor deferred so the milestone stays scoped to "unblock future cool stuff". See "M33 Implementation Notes" below.
+- **M33** (done): `SYS_MAP_NODE` — kernel-granted anonymous writable memory. Tasks can mint fresh `NodeType::Memory` nodes at runtime; the kernel allocates backing frames, adds a `write` edge from caller → new node (implying `read`), and maps the frames into the task's data-VA window. Demo at `crates/mmap-user/` (`spawn mmap`). See "M33 Implementation Notes" below.
+- **M33.5** (done, pure user-space): helios-std's `GlobalAlloc` now back-ends on `SYS_MAP_NODE` instead of a 64 KiB in-binary bump arena. Slab-chained bump allocator; first `alloc` call installs a 16 KiB slab via `graph::map_node`; oversized requests install a slab sized to fit. Each slab appears as a `write` edge from the task to a `NodeType::Memory` node; kernel cleanup at task exit reclaims everything. No kernel changes — all user-space. Demo at `crates/bigalloc-user/` (`spawn bigalloc`) allocates a 16 KiB `Vec<u64>`, then a 32 KiB `Vec<u64>` to force slab chaining, and inspects `list_edges(self)` to verify multiple memory edges exist.
 - **M34** (done): `SYS_READ_EDGE_LABEL` — read a single outgoing edge's full UTF-8 label by index. Closes the "everything shows as `?`" gap: `SYS_LIST_EDGES` keeps its compact 16-byte entries with a cap-kind byte, and user code issues one follow-up syscall per structural edge it wants the actual label for. Shipped as append-only (ABI not broken); `spawn ls 1` now prints `child` for all 19 root outgoing edges instead of `?`. See "M34 Implementation Notes" below.
 - **M35**: Cap delegation + CDT for revocation. (Was going to be M34; `SYS_READ_EDGE_LABEL` shipped first because it's a ~40 LOC kernel change and `ls` was staring at `?` for three milestones straight.)
 - **M36**: Multiple user tasks coexisting.
@@ -230,13 +231,15 @@ Things the `helios-std` milestone learned, worth preserving:
    into `text` and `rwdata` edges once there's a reason for strict
    W^X intra-task (e.g. JIT hardening).
 
-3. **The bump allocator lives inside the binary.** Because there's no
-   `SYS_MAP_NODE` / anonymous page grant yet, `helios-std`'s global
-   allocator is backed by a 64 KiB static `[u8; N]` in the binary
-   image itself. `static mut X: [u8; N] = [0; N]` would get placed in
-   `.bss`, which `objcopy -O binary` drops; an explicit non-zero
-   initializer (`[0xAA; N]`) forces it into `.data` so the kernel
-   actually copies the page bytes. See `crates/helios-std/src/heap.rs`.
+3. **The bump allocator: in-binary in M31, `SYS_MAP_NODE`-backed from
+   M33.5.** M31 shipped a 64 KiB `[0xAA; N]` arena in each user
+   binary's `.data` (the non-zero initializer is load-bearing — a
+   plain `[0; N]` lands in `.bss` which `objcopy -O binary` drops).
+   M33.5 rewired helios-std's `GlobalAlloc` to fetch slabs from the
+   kernel via `SYS_MAP_NODE`, shrinking each user binary by ~64 KiB
+   and letting `alloc::Vec`/`String` grow up to the task's data-VA
+   window (64 KiB in M33). See `crates/helios-std/src/heap.rs` and
+   the M33 notes below for the per-slab accounting.
 
 4. **Panic handler + `_start` via macro.** A Rust library cannot define
    `#[panic_handler]`, so `helios-std` provides a `helios_entry!`
@@ -360,6 +363,57 @@ Things `SYS_READ_EDGE_LABEL` learned, worth preserving:
    navigator, a `find`-equivalent) wants the strings up-front it can
    build a small `Vec<(EdgeInfo, String)>` in a helper.
 
+## M33.5 Implementation Notes
+
+Things the `GlobalAlloc` rewiring learned, worth preserving:
+
+1. **No kernel change required.** M33.5 is pure user-space —
+   helios-std's `GlobalAlloc` is now a client of `SYS_MAP_NODE`
+   exactly the way `crates/mmap-user/` is, just invoked implicitly by
+   every `Vec::push` / `format!` / `Box::new` / `String::from` that
+   flows through `alloc::*`. The kernel's syscall surface, cap model,
+   and task lifecycle are unchanged.
+
+2. **Lazy init, no bootstrap arena.** The `_start` shim (expanded by
+   `helios_entry!`) only touches `AtomicUsize`s and the panic handler
+   only uses stack + `core::write!`, so nothing in the pre-`main`
+   path allocates. The first heap allocation `main()` performs is
+   what kicks the allocator into requesting its first slab. Dropping
+   the old 4 KiB-or-64 KiB in-binary arena shrank `hello-user` from
+   ~72 KiB to ~7 KiB on disk.
+
+3. **Slab chain, not a free-list.** Current state is five
+   `AtomicUsize` slots in `.data.helios_heap` (`CURRENT_BASE`,
+   `CURRENT_END`, `CURRENT_CURSOR`, `SLAB_COUNT`, `PRIOR_BYTES`).
+   Only the *current* slab is bumpable; older slabs remain live via
+   whatever Rust references still point into them but the allocator
+   does not track or reuse them. Deallocation is a no-op; the
+   kernel's M33 `mem_node_ids` cleanup at task exit reclaims every
+   slab. This is exactly the same "everything lives while the task
+   does, nothing lives past it" shape as every other piece of
+   per-task state in Helios today.
+
+4. **SeqCst atomics, not Relaxed.** Single-hart U-mode strictly only
+   needs `Relaxed`, but an early version using `Relaxed` produced
+   stale reads in the fit-retry loop when LTO inlined
+   `install_new_slab` into `alloc`: the post-install cursor read
+   returned zero. `SeqCst` gave the compiler explicit ordering
+   fences and settled the codegen. Cheap at M33.5 scale; revisit if
+   the allocator ever shows up in a profile.
+
+5. **No cross-task sharing.** Each user task has its own allocator
+   state in its own `.data.helios_heap` (it's a static — no run-time
+   coordination between tasks exists yet). A shared-heap design is a
+   Proposal C / CDT follow-on, not a M33.5 concern.
+
+6. **Accepted scope cuts.** No per-allocation free. No slab
+   compaction. No alignment-waste tracking beyond the conservative
+   `PRIOR_BYTES` tally. Oversized allocations request a right-sized
+   slab but can still hit `ENOMEM` when the 16-page task data window
+   is exhausted — in which case `GlobalAlloc::alloc` returns null
+   and Rust panics via `handle_alloc_error`, which is correct OOM
+   behaviour.
+
 ---
 
-*Last reviewed: 2026-04-17 (post-M34 `SYS_READ_EDGE_LABEL`: `ls 1` prints full structural labels). Next review after the heap-allocator refactor or CDT lands.*
+*Last reviewed: 2026-04-17 (post-M33.5 — helios-std's `GlobalAlloc` now back-ends on `SYS_MAP_NODE` slabs; Proposal A from `post-m32-directions.md` is fully closed). Next review after CDT lands.*

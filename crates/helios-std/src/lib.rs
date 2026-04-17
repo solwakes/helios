@@ -44,16 +44,17 @@
 //! }
 //! ```
 //!
-//! # M31/M33 caveats (stopgaps until follow-on milestones)
+//! # M31 / M33 / M33.5 caveats (stopgaps until follow-on milestones)
 //!
-//! - **64 KiB bump heap, no free.** The heap still lives inside the
-//!   binary image for now — M33 adds [`graph::map_node`] for explicit
-//!   slabs of dynamic memory, but the `GlobalAlloc` backing for
-//!   `alloc::*` has not yet been rerouted through it. That integration
-//!   is a follow-on milestone; until then, `Vec`/`String`/`format!`
-//!   share the binary-embedded arena (trackable via [`heap::used`] /
-//!   [`heap::capacity`]), and user programs that want bigger working
-//!   sets should call [`graph::map_node`] directly.
+//! - **Heap: `SYS_MAP_NODE`-backed slabs, no per-alloc free.** As of
+//!   M33.5 the global allocator is a slab-chained bump allocator whose
+//!   backing memory comes from the kernel via [`graph::map_node`] (not
+//!   from a 64 KiB static inside the binary image, as in M31–M33).
+//!   Individual allocations are never freed; slabs die with the task
+//!   (the kernel's M33 `mem_node_ids` cleanup removes every Memory
+//!   node on exit). Use [`heap::used`] / [`heap::capacity`] /
+//!   [`heap::slab_count`] for diagnostics, and `graph::map_node`
+//!   directly if you want explicit control over a slab.
 //! - **W^X at the task level is waived.** Exec edges are mapped R+W+X+U
 //!   so initialized data can be patched at load time. Cross-task caps
 //!   are still strictly MMU-enforced (no edge → no mapping → no access).

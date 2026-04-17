@@ -1,6 +1,6 @@
 # Post-M32 Directions
 
-*Status: Partially shipped. Written 2026-04-17 after M31 + M32 shipped overnight. Proposal A was implemented as M33 later the same day (see the "Shipped in M33" note below); Proposal B (sub-option B.2) shipped as M34 the same day (see the "Shipped in M34" note under Proposal B). Proposal C is still on the table.*
+*Status: Partially shipped. Written 2026-04-17 after M31 + M32 shipped overnight. Proposal A was implemented as M33 on 2026-04-17, then completed by M33.5 (the GlobalAlloc rerouting follow-on — see the "Shipped in M33.5" note below); Proposal B (sub-option B.2) shipped as M34 the same day. Proposal A is now fully closed. Proposal C is still on the table.*
 
 ## Context
 
@@ -47,6 +47,27 @@ Edges are kernel-declared-only at task spawn. There's no way for task A to grant
 > - helios-std: `sys::SYS_MAP_NODE`, `sys::ENOMEM`, `sys::sys_map_node`, `graph::Errno::NoMem`, `graph::map_node`, `graph::map_node_slice`. Re-exported from `prelude`.
 > - Demo: `crates/mmap-user/` (`spawn mmap`) maps 32 KiB + 8 KiB, fills each with a distinct pattern, verifies readback, checks non-overlap, and proves the two regions are disjoint. UART transcript at `screenshots/m33-mmap-uart.txt`.
 > - **Not shipped in M33 (deferred intentionally):** rerouting `GlobalAlloc` through `map_node`. The 64 KiB bump heap is still in-binary; the follow-on is to shrink it to 4 KiB and chain `map_node(64 KiB)` slabs. This kept M33 scoped to "ship the primitive, unblock downstream work". Cap-model note: `map_node` self-grants `write` (no "grant" cap gates allocation) — matches anonymous `mmap` on Unix; revisit alongside Proposal C.
+>
+> **Shipped in M33.5 (the heap-integration follow-on).** helios-std's
+> `GlobalAlloc` now requests its backing memory from the kernel via
+> `SYS_MAP_NODE` rather than embedding a 64 KiB arena in each user
+> binary. The allocator is a slab-chained bump allocator: the first
+> `alloc` call installs a 16 KiB slab via `graph::map_node`; when a
+> request doesn't fit, the allocator requests a larger slab sized to
+> the request and keeps bumping. `helios-std::heap::{used, capacity,
+> slab_count, SLAB_DEFAULT, MAX_SLABS}` expose allocator stats for
+> demo programs. Result: user binaries shrank dramatically
+> (`hello-user` from ~72 KiB to ~7 KiB, `mmap-user` from ~70 KiB to
+> ~5 KiB) because the `[0xAA; 64K]` padding is no longer in the
+> image. The kernel's per-task `mem_node_ids` cleanup reclaims every
+> slab on task exit, so no `SYS_UNMAP_NODE` was needed. Accepted
+> scope cuts: no per-allocation free (bump semantics), no cross-task
+> sharing, no alignment-waste accounting. Demo:
+> `crates/bigalloc-user/` (`spawn bigalloc`) allocates a 16 KiB
+> `Vec<u64>` then a 32 KiB `Vec<u64>` to force slab chaining and
+> prints `list_edges(self_id())` to show two `write` edges to
+> `NodeType::Memory` nodes — proof the allocator is backed by real
+> kernel-managed memory. Proposal A is fully closed.
 
 **Goal:** A user task can request "give me N bytes of writable memory I own" via syscall. The kernel allocates a fresh node, maps its content pages into the caller's VA, adds a `write` edge from caller → new node. The user sees a pointer to N zeroed bytes.
 

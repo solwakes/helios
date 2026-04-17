@@ -1312,6 +1312,7 @@ fn cmd_spawn(name: &str, arg: &str) {
         crate::println!("                spawn ls <id>   (M32: graph-native list_edges)");
         crate::println!("                spawn cat <id>  (M32: graph-native read_node)");
         crate::println!("                spawn mmap      (M33: SYS_MAP_NODE dynamic memory)");
+        crate::println!("                spawn bigalloc  (M33.5: GlobalAlloc via SYS_MAP_NODE slabs)");
         return;
     }
     // Shortcut: "spawn userdemo" launches the boot-time demo code node.
@@ -1506,6 +1507,23 @@ fn cmd_spawn(name: &str, arg: &str) {
         crate::println!("user task returned {}", rc);
         return;
     }
+    // M33.5: GlobalAlloc-via-SYS_MAP_NODE smoke test. The task needs
+    // the self-traverse cap because it reads its own outgoing edges
+    // to confirm the allocator minted write-edges to Memory nodes.
+    if name == "bigalloc" || name == "bigalloc-user" {
+        let code_id = crate::user::bigalloc_code_id();
+        if code_id == 0 {
+            crate::println!("bigalloc-user-code not initialized");
+            return;
+        }
+        crate::println!(
+            "helios> spawning M33.5 'bigalloc' — GlobalAlloc via SYS_MAP_NODE slabs (code #{})",
+            code_id,
+        );
+        let rc = crate::user::run_user_task_with_caps(code_id, &[], true, 0, 0);
+        crate::println!("user task returned {}", rc);
+        return;
+    }
     // Numeric argument -> treat as a code node id and launch as user task.
     if let Some(id) = parse_usize(name) {
         let code_id = id as u64;
@@ -1531,7 +1549,7 @@ fn cmd_spawn(name: &str, arg: &str) {
         "producer" => crate::task::demo_producer,
         "consumer" => crate::task::demo_consumer,
         _ => {
-            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), ls <id>, cat <id> (M32), mmap (M33), or a numeric code node id", name);
+            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), ls <id>, cat <id> (M32), mmap (M33), bigalloc (M33.5), or a numeric code node id", name);
             return;
         }
     };

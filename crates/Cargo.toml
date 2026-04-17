@@ -12,6 +12,7 @@
 #   - ls-user    : graph-native `ls` — enumerate a node's outgoing edges (M32).
 #   - cat-user   : graph-native `cat` — print a node's content as text (M32).
 #   - mmap-user  : dynamic memory via SYS_MAP_NODE (M33).
+#   - bigalloc-user : GlobalAlloc-via-SYS_MAP_NODE smoke test (M33.5).
 
 [workspace]
 resolver = "2"
@@ -21,6 +22,7 @@ members = [
     "ls-user",
     "cat-user",
     "mmap-user",
+    "bigalloc-user",
 ]
 
 [profile.release]

@@ -327,6 +327,23 @@ pub fn mmap_program_bytes() -> &'static [u8] {
     MMAP_USER_BIN
 }
 
+// ---------------------------------------------------------------------------
+// M33.5: `bigalloc-user` — proves helios-std's GlobalAlloc is backed by
+// SYS_MAP_NODE slabs. Allocates a big Vec, then a bigger Vec, and
+// verifies two write-edges to Memory nodes appear on the task.
+// See `crates/bigalloc-user/src/main.rs`.
+// ---------------------------------------------------------------------------
+
+static BIGALLOC_USER_BIN: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/user-bins/bigalloc-user.bin",
+));
+
+/// Raw bytes of the `bigalloc-user` GlobalAlloc smoke-test program.
+pub fn bigalloc_program_bytes() -> &'static [u8] {
+    BIGALLOC_USER_BIN
+}
+
 // The bad-demo blob: loads from an unmapped VA so the MMU (not the
 // syscall layer) catches the capability violation.
 global_asm!(
@@ -2262,6 +2279,8 @@ static mut LS_CODE_ID: u64 = 0;
 static mut CAT_CODE_ID: u64 = 0;
 /// M33: node id of the `mmap` demo (exercises SYS_MAP_NODE).
 static mut MMAP_CODE_ID: u64 = 0;
+/// M33.5: node id of the `bigalloc` demo (GlobalAlloc via SYS_MAP_NODE).
+static mut BIGALLOC_CODE_ID: u64 = 0;
 
 /// Initialize the demo user-space nodes: a Binary code node for each
 /// demo + a Text node the M29 demo reads + the scratch node the M30
@@ -2347,6 +2366,12 @@ pub fn init() {
     if let Some(n) = g.get_node_mut(mmap_id) { n.content = mmap_bytes.to_vec(); }
     g.add_edge(1, "child", mmap_id);
 
+    // M33.5: GlobalAlloc-via-SYS_MAP_NODE smoke test.
+    let bigalloc_bytes = bigalloc_program_bytes();
+    let bigalloc_id = g.create_node(NodeType::Binary, "bigalloc-user-code");
+    if let Some(n) = g.get_node_mut(bigalloc_id) { n.content = bigalloc_bytes.to_vec(); }
+    g.add_edge(1, "child", bigalloc_id);
+
     unsafe {
         DEMO_CODE_ID = code_id;
         BADDEMO_CODE_ID = bad_id;
@@ -2360,6 +2385,7 @@ pub fn init() {
         LS_CODE_ID = ls_id;
         CAT_CODE_ID = cat_id;
         MMAP_CODE_ID = mmap_id;
+        BIGALLOC_CODE_ID = bigalloc_id;
     }
     crate::println!(
         "[user] demo nodes ready: demo=#{} ({}B) bad=#{} ({}B) text=#{}",
@@ -2381,6 +2407,10 @@ pub fn init() {
     crate::println!(
         "[user] M33 native Rust: mmap=#{} ({} B)",
         mmap_id, mmap_bytes.len(),
+    );
+    crate::println!(
+        "[user] M33.5 native Rust: bigalloc=#{} ({} B)",
+        bigalloc_id, bigalloc_bytes.len(),
     );
 }
 
@@ -2412,3 +2442,6 @@ pub fn cat_code_id() -> u64 { unsafe { CAT_CODE_ID } }
 /// Node id of the compiled `mmap-user` Rust binary (M33).
 #[allow(static_mut_refs)]
 pub fn mmap_code_id() -> u64 { unsafe { MMAP_CODE_ID } }
+/// Node id of the compiled `bigalloc-user` Rust binary (M33.5).
+#[allow(static_mut_refs)]
+pub fn bigalloc_code_id() -> u64 { unsafe { BIGALLOC_CODE_ID } }

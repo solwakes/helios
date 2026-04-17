@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "bigalloc-user"
+version = "0.1.0"
+dependencies = [
+ "helios-std",
+]
+
+[[package]]
 name = "cat-user"
 version = "0.1.0"
 dependencies = [

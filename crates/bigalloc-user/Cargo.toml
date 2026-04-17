@@ -1,0 +1,13 @@
+[package]
+name = "bigalloc-user"
+version = "0.1.0"
+edition = "2021"
+description = "GlobalAlloc-via-SYS_MAP_NODE smoke test — proves slab chaining (M33.5)"
+build = "build.rs"
+
+[[bin]]
+name = "bigalloc-user"
+path = "src/main.rs"
+
+[dependencies]
+helios-std = { path = "../helios-std" }
