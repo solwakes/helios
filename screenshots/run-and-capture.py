@@ -30,17 +30,21 @@ QEMU_CMD = [
 ]
 
 COMMANDS = [
-    # Wait for boot, then drive the shell.
-    (5.0, "spawn hello\r\n"),    # M31: hello program
-    (6.0, "spawn ls 1\r\n"),     # M32: ls root — enumerate all top-level nodes
-    (6.0, "spawn ls 0\r\n"),     # M32: ls with default (root) arg
-    (6.0, "spawn cat 16\r\n"),   # M32: cat the demo-text node (readable)
-    (6.0, "spawn cat 1\r\n"),    # M32: cat root — expect EPERM, graceful exit
-    (6.0, "spawn who\r\n"),      # regression: M30 asm demo still works
+    # Compact scripted exercise:
+    #   - M31 hello (print + self_id + list_edges + EPERM via Result)
+    #   - M32 ls (list the root node's 18 child edges)
+    #   - M32 cat on a readable node (the M29 demo-text node, id=16)
+    #   - M32 cat on a nonexistent node (id=99999) — the kernel refuses
+    #     to add a read edge to a missing node, so cat gets EPERM from
+    #     SYS_READ_NODE and returns exit=1 gracefully.
+    (5.0, "spawn hello\r\n"),
+    (5.0, "spawn ls\r\n"),
+    (5.0, "spawn cat 16\r\n"),
+    (5.0, "spawn cat 99999\r\n"),
 ]
 # After the last scripted command, wait this long for output to drain
 # before killing qemu.
-QUIT_AFTER_LAST_CMD_SECS = 8.0
+QUIT_AFTER_LAST_CMD_SECS = 6.0
 
 
 def main() -> int:
