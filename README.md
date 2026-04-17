@@ -40,6 +40,7 @@ see [`docs/`](docs/) for design rationale and architecture notes:
 - **TCP/IP stack + HTTP server** — graph is queryable as JSON over the network (M24–M28)
 - **U-mode user tasks with capability-edge security** — graph edges *are* the capability space, MMU-enforced (M29–M30)
 - **helios-std** — Rust-native userspace library with raw syscall wrappers, typed graph primitives, `println!`, and a bump allocator; first native Rust binary runs as `spawn hello` (M31)
+- **graph-native Rust tools** — `spawn ls <id>` walks a node's outgoing edges, `spawn cat <id>` reads a node's content. Built on helios-std; each a few dozen lines of `match` over `Result<_, Errno>`. (M32)
 
 ## building
 
@@ -273,6 +274,7 @@ the graph is the filesystem, the process table, the device tree, and the IPC mec
 | M29 | user space with capability-edge security (MMU-enforced) | `1b39c24` |
 | M30 | expanded syscall ABI (write, list_edges, follow_edge, self) | `10fcf5e` |
 | M31 | helios-std — Rust-native userspace library + hello user program | — |
+| M32 | graph-native Rust tools — `spawn ls <id>`, `spawn cat <id>` | — |
 
 ## license
 

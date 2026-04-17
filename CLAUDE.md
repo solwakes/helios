@@ -36,7 +36,9 @@ helios/
 ├── crates/                   ← (M31+) userspace sub-workspace
 │   ├── Cargo.toml            ← sub-workspace manifest (excluded from kernel workspace)
 │   ├── helios-std/           ← Rust-native "libc" — syscalls, graph types, print, allocator
-│   └── hello-user/           ← first native Rust user program (spawn hello)
+│   ├── hello-user/           ← first native Rust user program (spawn hello)
+│   ├── ls-user/              ← graph-native `ls` (M32) — `spawn ls <id>`
+│   └── cat-user/             ← graph-native `cat` (M32) — `spawn cat <id>`
 ├── docs/                     ← design rationale, kernel docs, userspace
 ├── doom/, doomgeneric/       ← DOOM port (C, linked via FFI)
 ├── screenshots/              ← milestone screenshots + UART transcripts
@@ -119,14 +121,15 @@ Close-after-response, no keep-alive, 4KB request cap, 64KB response cap. Body-re
 
 Single-threaded, polling, `static mut` state. Socket table is 16 slots, listener table is 8 slots. Don't hold references across `tcp::*` calls (the kernel pattern is `drop(s)` before any call that might re-enter SOCKETS).
 
-## Milestone Status (M1–M31 Complete)
+## Milestone Status (M1–M32 Complete)
 
 See `README.md` for the user-facing list. Current front lines:
 
 - **M29 (done):** First U-mode task, MMU cap enforcement, 3 syscalls (`READ_NODE`, `PRINT`, `EXIT`). Pivot to privilege-separation via graph-edge capabilities.
 - **M30 (done):** Expanded syscall ABI — `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + the `traverse` capability kind. Four new demos (`who`, `explorer`, `editor`, `naughty`) prove introspection + mutation + write-cap refusal.
 - **M31 (done):** `helios-std` — the Rust-native "libc" for Helios user-mode. Raw syscall wrappers (`sys`), typed graph primitives (`NodeId`, `Label`/`LabelKind`, `Edge`/`EdgeInfo`, `Errno`), `print!`/`println!` macros over `SYS_PRINT`, `self_id`/`exit`, a 64 KiB bump allocator for `alloc::*`, and the `helios_entry!` macro that generates `_start` + a panic handler. First native Rust U-mode program lives at `crates/hello-user/`; `spawn hello` runs it. Kernel side: `build.rs` compiles the userspace sub-workspace and embeds the raw binary via `include_bytes!`. Exec edges are now R+W+X (see design notes below) and can span multiple consecutive 4 KiB pages (`USER_CODE_MAX_PAGES = 64`), so real linker-placed Rust binaries sit as one contiguous image at `0x4000_0000`.
-- **M32+ planned:** More native Rust user programs (`ls`/`cat`/`tree`), cap delegation with a capability-derivation tree, multiple coexisting user tasks, `SYS_MAP_NODE` (so the bump allocator can request fresh pages instead of living inside the binary image), port DOOM to user mode as the litmus test.
+- **M32 (done):** Graph-native Rust tools: `ls <id>` walks a node's outgoing edges (`SYS_LIST_EDGES`) and `cat <id>` reads its content (`SYS_READ_NODE`). Live in `crates/ls-user/` and `crates/cat-user/`, both linked against helios-std. Shell grants the task-specific capability (`traverse` for ls, `read` for cat) at spawn time and passes the target id in `a0` — recovered via `helios_std::task::args()`. This is the M31 ergonomics test: can a 50-line Rust `main()` feel like normal Rust while talking directly to the graph? Yes.
+- **M33+ planned:** Cap delegation with a capability-derivation tree, multiple coexisting user tasks, `SYS_MAP_NODE` (so the bump allocator can request fresh pages instead of living inside the binary image), port DOOM to user mode as the litmus test.
 
 ## Common Gotchas
 

@@ -9,12 +9,16 @@
 # Members:
 #   - helios-std : the Rust-native libc for Helios user-mode (M31).
 #   - hello-user : the "hello from Rust userspace" user program (M31).
+#   - ls-user    : graph-native `ls` — enumerate a node's outgoing edges (M32).
+#   - cat-user   : graph-native `cat` — print a node's content as text (M32).
 
 [workspace]
 resolver = "2"
 members = [
     "helios-std",
     "hello-user",
+    "ls-user",
+    "cat-user",
 ]
 
 [profile.release]

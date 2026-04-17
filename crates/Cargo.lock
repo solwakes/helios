@@ -3,11 +3,25 @@
 version = 4
 
 [[package]]
+name = "cat-user"
+version = "0.1.0"
+dependencies = [
+ "helios-std",
+]
+
+[[package]]
 name = "helios-std"
 version = "0.1.0"
 
 [[package]]
 name = "hello-user"
+version = "0.1.0"
+dependencies = [
+ "helios-std",
+]
+
+[[package]]
+name = "ls-user"
 version = "0.1.0"
 dependencies = [
  "helios-std",

@@ -1,0 +1,13 @@
+[package]
+name = "cat-user"
+version = "0.1.0"
+edition = "2021"
+description = "Graph-native `cat` for Helios — reads a node's content and prints it (M32)"
+build = "build.rs"
+
+[[bin]]
+name = "cat-user"
+path = "src/main.rs"
+
+[dependencies]
+helios-std = { path = "../helios-std" }

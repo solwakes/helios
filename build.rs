@@ -159,23 +159,26 @@ fn build_user_binaries(helios_root: &Path, kernel_out_dir: &str) {
     // is the safer path.
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
 
-    // Build the hello-user binary.
-    build_user_crate(
-        &cargo,
-        &crates_dir,
-        &user_target_dir,
-        "hello-user",
-        &user_bin_dir,
-    );
+    // Build each user-space binary we want to embed into the kernel.
+    //
+    // Every entry here becomes an `include_bytes!` in src/user.rs and
+    // a corresponding `<name>_code_id()` accessor. Adding a new user
+    // program is: (1) drop a crate into crates/, (2) list it here,
+    // (3) wire `spawn <name>` in src/shell.rs.
+    for bin in &["hello-user", "ls-user", "cat-user"] {
+        build_user_crate(&cargo, &crates_dir, &user_target_dir, bin, &user_bin_dir);
+    }
 
     // Tell cargo to rerun if anything in the user workspace changes.
     // This isn't perfect (cargo doesn't recurse into directories via
     // rerun-if-changed), but it catches the top-level manifests.
     println!("cargo:rerun-if-changed=crates/Cargo.toml");
-    println!("cargo:rerun-if-changed=crates/hello-user/Cargo.toml");
-    println!("cargo:rerun-if-changed=crates/hello-user/src/main.rs");
-    println!("cargo:rerun-if-changed=crates/hello-user/linker.ld");
-    println!("cargo:rerun-if-changed=crates/hello-user/build.rs");
+    for bin in &["hello-user", "ls-user", "cat-user"] {
+        println!("cargo:rerun-if-changed=crates/{bin}/Cargo.toml");
+        println!("cargo:rerun-if-changed=crates/{bin}/src/main.rs");
+        println!("cargo:rerun-if-changed=crates/{bin}/linker.ld");
+        println!("cargo:rerun-if-changed=crates/{bin}/build.rs");
+    }
     println!("cargo:rerun-if-changed=crates/helios-std/Cargo.toml");
     println!("cargo:rerun-if-changed=crates/helios-std/src/lib.rs");
     println!("cargo:rerun-if-changed=crates/helios-std/src/sys.rs");

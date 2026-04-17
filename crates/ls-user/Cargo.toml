@@ -1,0 +1,13 @@
+[package]
+name = "ls-user"
+version = "0.1.0"
+edition = "2021"
+description = "Graph-native `ls` — enumerate a node's outgoing edges (M32)"
+build = "build.rs"
+
+[[bin]]
+name = "ls-user"
+path = "src/main.rs"
+
+[dependencies]
+helios-std = { path = "../helios-std" }

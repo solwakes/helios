@@ -1,0 +1,167 @@
+spawn ls 1
+helios> spawning M32 'ls' — traverse-cap to #1 (code #23)
+[user] task #25 mapped 19 regions, entry=0x40000000, satp=0x8000000000080785
+       exec : va=0x40000000 pa=0x80788000 node=23
+       exec : va=0x40001000 pa=0x80789000 node=23
+       exec : va=0x40002000 pa=0x8078a000 node=23
+       exec : va=0x40003000 pa=0x8078b000 node=23
+       exec : va=0x40004000 pa=0x8078c000 node=23
+       exec : va=0x40005000 pa=0x8078d000 node=23
+       exec : va=0x40006000 pa=0x8078e000 node=23
+       exec : va=0x40007000 pa=0x8078f000 node=23
+       exec : va=0x40008000 pa=0x80790000 node=23
+       exec : va=0x40009000 pa=0x80791000 node=23
+       exec : va=0x4000a000 pa=0x80792000 node=23
+       exec : va=0x4000b000 pa=0x80793000 node=23
+       exec : va=0x4000c000 pa=0x80794000 node=23
+       exec : va=0x4000d000 pa=0x80795000 node=23
+       exec : va=0x4000e000 pa=0x80796000 node=23
+       exec : va=0x4000f000 pa=0x80797000 node=23
+       exec : va=0x40010000 pa=0x80798000 node=23
+       exec : va=0x40011000 pa=0x80799000 node=23
+       stack: va=0x401ff000 pa=0x8079a000 (R/W/U)
+ls #1
+[sys] SYS_LIST_EDGES(src=1, buf_va=0x401ffda8, max=32)
+  18 edges:
+    ? -> #2
+    ? -> #3
+    ? -> #9
+    ? -> #10
+    ? -> #11
+    ? -> #12
+    ? -> #14
+    ? -> #15
+    ? -> #16
+    ? -> #17
+    ? -> #18
+    ? -> #19
+    ? -> #20
+    ? -> #21
+    ? -> #22
+    ? -> #23
+    ? -> #24
+    ? -> #25
+  (cap: read=0 write=0 exec=0 traverse=0 other=18)
+[user] task #25 SYS_EXIT(0)
+[user] task #25 exited cleanly with code 0
+user task returned 0
+helios> spawn ls 0
+helios> spawning M32 'ls' — traverse-cap to #0 (code #23)
+[user] couldn't add traverse edge to node 0
+[user] task #26 mapped 19 regions, entry=0x40000000, satp=0x800000000008079b
+       exec : va=0x40000000 pa=0x8079e000 node=23
+       exec : va=0x40001000 pa=0x8079f000 node=23
+       exec : va=0x40002000 pa=0x807a0000 node=23
+       exec : va=0x40003000 pa=0x807a1000 node=23
+       exec : va=0x40004000 pa=0x807a2000 node=23
+       exec : va=0x40005000 pa=0x807a3000 node=23
+       exec : va=0x40006000 pa=0x807a4000 node=23
+       exec : va=0x40007000 pa=0x807a5000 node=23
+       exec : va=0x40008000 pa=0x807a6000 node=23
+       exec : va=0x40009000 pa=0x807a7000 node=23
+       exec : va=0x4000a000 pa=0x807a8000 node=23
+       exec : va=0x4000b000 pa=0x807a9000 node=23
+       exec : va=0x4000c000 pa=0x807aa000 node=23
+       exec : va=0x4000d000 pa=0x807ab000 node=23
+       exec : va=0x4000e000 pa=0x807ac000 node=23
+       exec : va=0x4000f000 pa=0x807ad000 node=23
+       exec : va=0x40010000 pa=0x807ae000 node=23
+       exec : va=0x40011000 pa=0x807b0000 node=23
+       stack: va=0x401ff000 pa=0x807b1000 (R/W/U)
+ls #1
+[sys] SYS_LIST_EDGES(src=1, buf_va=0x401ffda8, max=32)
+[user] capability violation: task #26 tried to LIST node 1 (no `traverse` edge)
+  ls: EPERM (no traverse cap to #1)
+[user] task #26 SYS_EXIT(1)
+[user] task #26 exited cleanly with code 1
+user task returned 1
+helios> spawn cat 16
+helios> spawning M32 'cat' — read-cap to #16 (code #24)
+[user] task #27 mapped 20 regions, entry=0x40000000, satp=0x80000000000807af
+       exec : va=0x40000000 pa=0x807b4000 node=24
+       exec : va=0x40001000 pa=0x807b5000 node=24
+       exec : va=0x40002000 pa=0x807b6000 node=24
+       exec : va=0x40003000 pa=0x807b7000 node=24
+       exec : va=0x40004000 pa=0x807b8000 node=24
+       exec : va=0x40005000 pa=0x807b9000 node=24
+       exec : va=0x40006000 pa=0x807ba000 node=24
+       exec : va=0x40007000 pa=0x807bb000 node=24
+       exec : va=0x40008000 pa=0x807bc000 node=24
+       exec : va=0x40009000 pa=0x807be000 node=24
+       exec : va=0x4000a000 pa=0x807bf000 node=24
+       exec : va=0x4000b000 pa=0x807c0000 node=24
+       exec : va=0x4000c000 pa=0x807c1000 node=24
+       exec : va=0x4000d000 pa=0x807c2000 node=24
+       exec : va=0x4000e000 pa=0x807c3000 node=24
+       exec : va=0x4000f000 pa=0x807c4000 node=24
+       exec : va=0x40010000 pa=0x807c5000 node=24
+       exec : va=0x40011000 pa=0x807c6000 node=24
+       read : va=0x40100000 pa=0x807c7000 node=16
+       stack: va=0x401ff000 pa=0x807c8000 (R/W/U)
+cat: task #27 reading node #16
+[sys] SYS_READ_NODE(node=16, buf_va=0x400018d0, len=4096)
+Hello from Helios U-mode! Edges are capabilities.
+cat: 50 bytes read from #16
+[user] task #27 SYS_EXIT(0)
+[user] task #27 exited cleanly with code 0
+user task returned 0
+helios> spawn cat 1
+helios> spawning M32 'cat' — read-cap to #1 (code #24)
+[user] task #28 mapped 20 regions, entry=0x40000000, satp=0x80000000000807bd
+       exec : va=0x40000000 pa=0x807cb000 node=24
+       exec : va=0x40001000 pa=0x807cc000 node=24
+       exec : va=0x40002000 pa=0x807cd000 node=24
+       exec : va=0x40003000 pa=0x807ce000 node=24
+       exec : va=0x40004000 pa=0x807cf000 node=24
+       exec : va=0x40005000 pa=0x807d0000 node=24
+       exec : va=0x40006000 pa=0x807d1000 node=24
+       exec : va=0x40007000 pa=0x807d2000 node=24
+       exec : va=0x40008000 pa=0x807d3000 node=24
+       exec : va=0x40009000 pa=0x807d5000 node=24
+       exec : va=0x4000a000 pa=0x807d6000 node=24
+       exec : va=0x4000b000 pa=0x807d7000 node=24
+       exec : va=0x4000c000 pa=0x807d8000 node=24
+       exec : va=0x4000d000 pa=0x807d9000 node=24
+       exec : va=0x4000e000 pa=0x807da000 node=24
+       exec : va=0x4000f000 pa=0x807db000 node=24
+       exec : va=0x40010000 pa=0x807dc000 node=24
+       exec : va=0x40011000 pa=0x807dd000 node=24
+       read : va=0x40100000 pa=0x807de000 node=1
+       stack: va=0x401ff000 pa=0x807df000 (R/W/U)
+cat: task #28 reading node #1
+[sys] SYS_READ_NODE(node=1, buf_va=0x400018d0, len=4096)
+(empty)
+[user] task #28 SYS_EXIT(0)
+[user] task #28 exited cleanly with code 0
+user task returned 0
+helios> spawn cat 99999
+helios> spawning M32 'cat' — read-cap to #99999 (code #24)
+[user] couldn't add read edge to node 99999
+[user] task #29 mapped 19 regions, entry=0x40000000, satp=0x80000000000807d4
+       exec : va=0x40000000 pa=0x807e2000 node=24
+       exec : va=0x40001000 pa=0x807e3000 node=24
+       exec : va=0x40002000 pa=0x807e4000 node=24
+       exec : va=0x40003000 pa=0x807e5000 node=24
+       exec : va=0x40004000 pa=0x807e6000 node=24
+       exec : va=0x40005000 pa=0x807e7000 node=24
+       exec : va=0x40006000 pa=0x807e8000 node=24
+       exec : va=0x40007000 pa=0x807e9000 node=24
+       exec : va=0x40008000 pa=0x807ea000 node=24
+       exec : va=0x40009000 pa=0x807ec000 node=24
+       exec : va=0x4000a000 pa=0x807ed000 node=24
+       exec : va=0x4000b000 pa=0x807ee000 node=24
+       exec : va=0x4000c000 pa=0x807ef000 node=24
+       exec : va=0x4000d000 pa=0x807f0000 node=24
+       exec : va=0x4000e000 pa=0x807f1000 node=24
+       exec : va=0x4000f000 pa=0x807f2000 node=24
+       exec : va=0x40010000 pa=0x807f3000 node=24
+       exec : va=0x40011000 pa=0x807f4000 node=24
+       stack: va=0x401ff000 pa=0x807f5000 (R/W/U)
+cat: task #29 reading node #99999
+[sys] SYS_READ_NODE(node=99999, buf_va=0x400018d0, len=4096)
+[user] capability violation: task #29 tried to read node 99999 (no edge)
+cat: EPERM reading #99999 — task has no `read` cap for this node
+[user] task #29 SYS_EXIT(1)
+[user] task #29 exited cleanly with code 1
+user task returned 1
+helios> 

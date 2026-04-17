@@ -264,6 +264,34 @@ pub fn hello_program_bytes() -> &'static [u8] {
     HELLO_USER_BIN
 }
 
+// ---------------------------------------------------------------------------
+// M32: graph-native Rust user programs (ls, cat).
+//
+// Same pattern as HELLO_USER_BIN — each lives in its own crate under
+// crates/, built by build.rs into OUT_DIR/user-bins/<name>.bin, and is
+// embedded here via include_bytes!.
+// ---------------------------------------------------------------------------
+
+static LS_USER_BIN: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/user-bins/ls-user.bin",
+));
+
+/// Raw bytes of the `ls-user` graph-native listing program.
+pub fn ls_program_bytes() -> &'static [u8] {
+    LS_USER_BIN
+}
+
+static CAT_USER_BIN: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/user-bins/cat-user.bin",
+));
+
+/// Raw bytes of the `cat-user` graph-native content-read program.
+pub fn cat_program_bytes() -> &'static [u8] {
+    CAT_USER_BIN
+}
+
 // The bad-demo blob: loads from an unmapped VA so the MMU (not the
 // syscall layer) catches the capability violation.
 global_asm!(
@@ -1883,6 +1911,10 @@ static mut NAUGHTY_CODE_ID: u64 = 0;
 static mut SCRATCH_ID: u64 = 0;
 /// M31: node id of the `hello` Rust-native user program.
 static mut HELLO_CODE_ID: u64 = 0;
+/// M32: node id of the `ls` graph-native Rust-native user program.
+static mut LS_CODE_ID: u64 = 0;
+/// M32: node id of the `cat` graph-native Rust-native user program.
+static mut CAT_CODE_ID: u64 = 0;
 
 /// Initialize the demo user-space nodes: a Binary code node for each
 /// demo + a Text node the M29 demo reads + the scratch node the M30
@@ -1950,6 +1982,18 @@ pub fn init() {
     }
     g.add_edge(1, "child", hello_id);
 
+    // M32: graph-native `ls` + `cat` user programs, linked against
+    // helios-std. Both treat a node id as their only input (via a0).
+    let ls_bytes = ls_program_bytes();
+    let ls_id = g.create_node(NodeType::Binary, "ls-user-code");
+    if let Some(n) = g.get_node_mut(ls_id) { n.content = ls_bytes.to_vec(); }
+    g.add_edge(1, "child", ls_id);
+
+    let cat_bytes = cat_program_bytes();
+    let cat_id = g.create_node(NodeType::Binary, "cat-user-code");
+    if let Some(n) = g.get_node_mut(cat_id) { n.content = cat_bytes.to_vec(); }
+    g.add_edge(1, "child", cat_id);
+
     unsafe {
         DEMO_CODE_ID = code_id;
         BADDEMO_CODE_ID = bad_id;
@@ -1960,6 +2004,8 @@ pub fn init() {
         NAUGHTY_CODE_ID = nau_id;
         SCRATCH_ID = scratch_id;
         HELLO_CODE_ID = hello_id;
+        LS_CODE_ID = ls_id;
+        CAT_CODE_ID = cat_id;
     }
     crate::println!(
         "[user] demo nodes ready: demo=#{} ({}B) bad=#{} ({}B) text=#{}",
@@ -1973,6 +2019,10 @@ pub fn init() {
     crate::println!(
         "[user] M31 native Rust: hello=#{} ({} B)",
         hello_id, hello_bytes.len(),
+    );
+    crate::println!(
+        "[user] M32 native Rust: ls=#{} ({} B) cat=#{} ({} B)",
+        ls_id, ls_bytes.len(), cat_id, cat_bytes.len(),
     );
 }
 
@@ -1995,3 +2045,9 @@ pub fn scratch_id() -> u64 { unsafe { SCRATCH_ID } }
 /// Node id of the compiled `hello-user` Rust binary (M31).
 #[allow(static_mut_refs)]
 pub fn hello_code_id() -> u64 { unsafe { HELLO_CODE_ID } }
+/// Node id of the compiled `ls-user` Rust binary (M32).
+#[allow(static_mut_refs)]
+pub fn ls_code_id() -> u64 { unsafe { LS_CODE_ID } }
+/// Node id of the compiled `cat-user` Rust binary (M32).
+#[allow(static_mut_refs)]
+pub fn cat_code_id() -> u64 { unsafe { CAT_CODE_ID } }

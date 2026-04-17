@@ -139,8 +139,8 @@ Strategy A is the priority, and M31 shipped its first cut. Reasons the order was
 Revised order:
 - **M29–M30 (done):** Syscall ABI — `READ_NODE`, `PRINT`, `EXIT`, then `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + `traverse` cap kind.
 - **M31 (done):** `helios-std` crate as described above; `hello-user` as the first native binary.
-- **M32 (next):** Graph-native toolkit in native Rust — `ls`, `cat`, `tree`, maybe `grep`. These double as litmus tests for helios-std's ergonomics; anywhere it feels awkward, fix the library rather than reaching for string manipulation.
-- **M33+:** A `SYS_MAP_NODE`-style page-grant syscall (lets `helios-std` request fresh R/W pages instead of living inside its binary image), followed by a real heap allocator. Then cap delegation + CDT for revocation. Then `helios-libc` as a Rust library, `riscv64-helios` rustc target, and POSIX shim hardened enough for DOOM-in-U-mode.
+- **M32 (done):** Graph-native Rust toolkit — `ls <id>` (lists outgoing edges via `SYS_LIST_EDGES`) and `cat <id>` (reads content via `SYS_READ_NODE`). Both live in `crates/{ls,cat}-user/` and link against helios-std. Each target's capability is granted at spawn time by the shell (`traverse` for ls, `read` for cat). These are the first non-trivial graph-native tools — and they validated that the M31 ergonomics carry over: each binary's `main()` is ~50 lines of normal-looking Rust.
+- **M33+:** `tree`/`grep`-style tools. A `SYS_MAP_NODE`-style page-grant syscall (lets `helios-std` request fresh R/W pages instead of living inside its binary image), followed by a real heap allocator. Then cap delegation + CDT for revocation. Then `helios-libc` as a Rust library, `riscv64-helios` rustc target, and POSIX shim hardened enough for DOOM-in-U-mode.
 
 ## Cargo Considerations
 

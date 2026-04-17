@@ -2,7 +2,7 @@
 //!
 //! `use helios_std::prelude::*;` pulls in the day-to-day surface:
 //! graph primitives, `Errno`, heap-backed collections, and the
-//! `print!`/`println!` macros (via the `helios_std` crate alias).
+//! `print!` / `println!` macros.
 //!
 //! Example:
 //!
@@ -17,20 +17,32 @@
 //!
 //! fn main() {
 //!     let me: NodeId = self_id();
-//!     helios_std::println!("hello from #{}", me);
+//!     println!("hello from {}", me);
 //! }
 //! ```
 //!
-//! The `print!` / `println!` macros aren't re-exported here — they're
-//! already `#[macro_export]`, so `helios_std::println!(...)` works
-//! from any module.
+//! # Name clash note
+//!
+//! helios-std has both `io::print` / `io::println` **functions** (take
+//! `&str`) and `print!` / `println!` **macros** (format their
+//! arguments). We re-export the macros here — they share the Rust
+//! macro namespace and user code written against `std` habits
+//! (`println!(fmt, ...)`) just works. The functions are still
+//! reachable as `helios_std::io::print` if you want zero-format str
+//! output.
 
 pub use crate::graph::{
     follow_edge, list_edges, list_edges_into, read_node, write_node, Edge, EdgeInfo, Errno,
     Label, LabelKind, NodeId,
 };
-pub use crate::io::{print, println};
+pub use crate::io::Stdout;
 pub use crate::task::{args, exit, self_id};
+
+// Re-export the format-aware macros. They're `#[macro_export]`'d in
+// `io.rs`, which means they live at `helios_std::<name>` — `pub use`
+// brings them into the prelude's scope. `print!` / `println!` then
+// look like their std counterparts to user code.
+pub use crate::{print, println};
 
 // Alloc re-exports so user code can say `Vec`, `String`, `Box`, `format!`
 // straight out of the prelude.

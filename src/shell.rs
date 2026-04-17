@@ -465,7 +465,7 @@ fn execute(line: &str) {
         "disk" => cmd_disk(),
         // Task commands
         "ps" => cmd_ps(),
-        "spawn" => cmd_spawn(arg1),
+        "spawn" => cmd_spawn(arg1, arg2),
         "kill" => cmd_kill(arg1),
         // IPC commands
         "ipc" => cmd_ipc(),
@@ -529,7 +529,8 @@ fn cmd_help() {
     crate::println!("  spawn <name>  - spawn a demo task (counter, fibonacci, busyloop,");
     crate::println!("                  producer, consumer, pingpong, userdemo, baddemo,");
     crate::println!("                  who, explorer, editor, naughty [M30],");
-    crate::println!("                  hello [M31 — native Rust on helios-std])");
+    crate::println!("                  hello [M31 — native Rust on helios-std],");
+    crate::println!("                  ls <id>, cat <id> [M32 — graph-native Rust tools])");
     crate::println!("  spawn <id>    - spawn a USER-MODE task from a code node (M29)");
     crate::println!("  kill <id>     - kill a task by ID");
     crate::println!("IPC commands:");
@@ -1296,9 +1297,9 @@ fn cmd_ps() {
     }
 }
 
-fn cmd_spawn(name: &str) {
+fn cmd_spawn(name: &str, arg: &str) {
     if name.is_empty() {
-        crate::println!("Usage: spawn <name|node_id>");
+        crate::println!("Usage: spawn <name|node_id> [arg]");
         crate::println!("  Kernel demos: counter, fibonacci, busyloop, producer, consumer, pingpong");
         crate::println!("  User space:   spawn <code_node_id>  (drops to U-mode with edge-based caps)");
         crate::println!("                spawn userdemo  (M29: read/forbidden demo)");
@@ -1308,6 +1309,8 @@ fn cmd_spawn(name: &str) {
         crate::println!("                spawn editor    (M30: SYS_WRITE_NODE on scratch)");
         crate::println!("                spawn naughty   (M30: SYS_WRITE_NODE -> EPERM)");
         crate::println!("                spawn hello     (M31: native Rust on helios-std)");
+        crate::println!("                spawn ls <id>   (M32: graph-native list_edges)");
+        crate::println!("                spawn cat <id>  (M32: graph-native read_node)");
         return;
     }
     // Shortcut: "spawn userdemo" launches the boot-time demo code node.
@@ -1413,6 +1416,70 @@ fn cmd_spawn(name: &str) {
         crate::println!("user task returned {}", rc);
         return;
     }
+    // M32: graph-native `ls` — walks a node's outgoing edges.
+    //
+    // `spawn ls <id>` grants the task a `traverse` cap to <id> (plus
+    // self-traverse so `helios_std::task::self_id` / list_edges on the
+    // task itself works if ls-user ever uses it), and passes <id> in a0.
+    // Default target with no arg is node #1 (root).
+    if name == "ls" || name == "ls-user" {
+        let code_id = crate::user::ls_code_id();
+        if code_id == 0 {
+            crate::println!("ls-user-code not initialized");
+            return;
+        }
+        let target: u64 = if arg.is_empty() {
+            1
+        } else if let Some(n) = parse_usize(arg) {
+            n as u64
+        } else {
+            crate::println!("ls: bad node id '{}'", arg);
+            return;
+        };
+        crate::println!(
+            "helios> spawning M32 'ls' — traverse-cap to #{} (code #{})",
+            target, code_id,
+        );
+        let rc = crate::user::run_user_task_with_caps(
+            code_id,
+            &[("traverse", target)],
+            true,
+            target as usize,
+            0,
+        );
+        crate::println!("user task returned {}", rc);
+        return;
+    }
+    // M32: graph-native `cat` — reads a node's content.
+    //
+    // `spawn cat <id>` grants a `read` cap to <id> and passes <id> in a0.
+    // No default: there's no well-known "standard" node to read, and
+    // refusing the no-arg case is a small but pleasant safety net.
+    if name == "cat" || name == "cat-user" {
+        let code_id = crate::user::cat_code_id();
+        if code_id == 0 {
+            crate::println!("cat-user-code not initialized");
+            return;
+        }
+        let Some(n) = parse_usize(arg) else {
+            crate::println!("Usage: spawn cat <node_id>");
+            return;
+        };
+        let target = n as u64;
+        crate::println!(
+            "helios> spawning M32 'cat' — read-cap to #{} (code #{})",
+            target, code_id,
+        );
+        let rc = crate::user::run_user_task_with_caps(
+            code_id,
+            &[("read", target)],
+            false,
+            target as usize,
+            0,
+        );
+        crate::println!("user task returned {}", rc);
+        return;
+    }
     // Numeric argument -> treat as a code node id and launch as user task.
     if let Some(id) = parse_usize(name) {
         let code_id = id as u64;
@@ -1438,7 +1505,7 @@ fn cmd_spawn(name: &str) {
         "producer" => crate::task::demo_producer,
         "consumer" => crate::task::demo_consumer,
         _ => {
-            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), or a numeric code node id", name);
+            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), ls <id>, cat <id> (M32), or a numeric code node id", name);
             return;
         }
     };

@@ -12,7 +12,7 @@ import time
 
 KERNEL = "target/riscv64gc-unknown-none-elf/release/helios"
 DISK = "helios.img"
-TRANSCRIPT = "screenshots/m31-hello-uart.txt"
+TRANSCRIPT = "screenshots/m31-m32-uart.txt"
 DONE_MARKER = "__M31_TEST_DONE__"
 
 QEMU_CMD = [
@@ -30,11 +30,13 @@ QEMU_CMD = [
 ]
 
 COMMANDS = [
-    # Wait for boot, then drive the shell:
-    (5.0, "spawn hello\r\n"),    # M31: first hello spawn
-    (6.0, "spawn hello\r\n"),    # M31: second spawn (idempotence test)
-    (6.0, "spawn who\r\n"),      # M30 regression: asm demo still works
-    (6.0, "spawn explorer\r\n"), # M30 regression: LIST_EDGES on self
+    # Wait for boot, then drive the shell.
+    (5.0, "spawn hello\r\n"),    # M31: hello program
+    (6.0, "spawn ls 1\r\n"),     # M32: ls root — enumerate all top-level nodes
+    (6.0, "spawn ls 0\r\n"),     # M32: ls with default (root) arg
+    (6.0, "spawn cat 16\r\n"),   # M32: cat the demo-text node (readable)
+    (6.0, "spawn cat 1\r\n"),    # M32: cat root — expect EPERM, graceful exit
+    (6.0, "spawn who\r\n"),      # regression: M30 asm demo still works
 ]
 # After the last scripted command, wait this long for output to drain
 # before killing qemu.
@@ -89,6 +91,7 @@ def main() -> int:
             if rlist:
                 chunk = os.read(proc.stdout.fileno(), 4096)
                 if not chunk:
+                    print(f"[harness] qemu stdout EOF at {time.monotonic() - start:.1f}s")
                     break
                 sys.stdout.buffer.write(chunk)
                 sys.stdout.buffer.flush()
@@ -100,16 +103,16 @@ def main() -> int:
                 last_cmd_sent_at is not None
                 and (time.monotonic() - last_cmd_sent_at) >= QUIT_AFTER_LAST_CMD_SECS
             ):
-                print("[harness] drained; killing qemu")
+                print(f"[harness] drained {QUIT_AFTER_LAST_CMD_SECS}s after last cmd; killing qemu")
                 break
 
             # Hard timeout guard.
             if (time.monotonic() - start) > 180.0:
-                print("[harness] timeout after 180s; killing qemu")
+                print("[harness] hard timeout after 180s; killing qemu")
                 break
 
             if proc.poll() is not None:
-                print(f"[harness] qemu exited early, rc={proc.returncode}")
+                print(f"[harness] qemu exited early at {time.monotonic() - start:.1f}s, rc={proc.returncode}")
                 break
     finally:
         try:
