@@ -158,9 +158,10 @@ Plan 9's namespaces don't enforce; the file server does. Helios edges are enforc
 - **M29** (done): Skeleton — one U-mode task, MMU enforcement, 3 syscalls. Cap violation = task kill.
 - **M30** (done): Expanded syscall ABI — `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + the `traverse` cap kind. Four new user demos (`who`, `explorer`, `editor`, `naughty`) prove introspection + mutation + refusal all work end-to-end.
 - **M31** (done): `helios-std` — the Rust-native userspace library. Typed syscall wrappers (`NodeId`, `Label`, `Errno`, `Edge`), `println!`, bump allocator, `_start`/panic-handler glue via `helios_entry!`. First linker-placed Rust U-mode binary (`hello-user`) runs end-to-end with the cap model: `Errno::Perm` propagates through `Result`, and a deliberate `read_node(root)` refusal is observably handled without killing the task. Kernel side: `build_user_address_space` now maps multi-page exec edges (R+W+X+U — W^X inside a task is waived until a follow-on edge-split; cross-task enforcement is unchanged).
-- **M32**: Cap delegation + CDT for revocation. (Bumped from M31 when M31 became "catch up to what rust-std.md promised".)
-- **M33**: Multiple user tasks coexisting.
-- **M34**: Port DOOM to user mode (the litmus test — does the cap model handle a big, real program?).
+- **M32** (done): Graph-native Rust tools — `ls <id>` enumerates outgoing edges (`SYS_LIST_EDGES`), `cat <id>` reads node content (`SYS_READ_NODE`). Both live at `crates/ls-user` / `crates/cat-user`, each a few dozen lines of `match` over `Result<_, Errno>`. Shell grants the exact cap each tool needs (`traverse` for `ls`, `read` for `cat`) and passes the target id as the first task arg. Validates that the M31 ergonomics carry through to real tool-shaped programs.
+- **M33**: Cap delegation + CDT for revocation. (Previously planned for M31 but the userspace library caught up to the design doc first.)
+- **M34**: Multiple user tasks coexisting.
+- **M35**: Port DOOM to user mode (the litmus test — does the cap model handle a big, real program?).
 
 ## M30 Implementation Notes
 
