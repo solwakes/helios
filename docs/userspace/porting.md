@@ -109,6 +109,42 @@ This is the cultural layer. How do we keep out-of-tree apps from turning Helios 
 3. **Manifests expose the cost** — an app that declares 50 caps should feel heavier than one that declares 3. Users learn to prefer narrow-cap software. App stores can rank on this.
 4. **Cultural expectation**: porting a POSIX binary is *one* way to get software on Helios, but it's not the *default* way. Native is default.
 
+## The Upstream Integration Question
+
+A tempting plan for ecosystem growth is "get crates to add Helios support upstream." This is **not reliable** and Helios should not be designed around it.
+
+Two constraints:
+
+1. **No compelling reason for upstream maintainers.** A Linux-targeted crate has no motivation to add Helios to its CI matrix, validate against Helios ABI changes, or respond to Helios-specific bugs. Even a cooperative maintainer would reasonably reject Helios-specific changes on scope grounds.
+
+2. **AI-authored contribution politics.** Many projects (especially large, culturally-visible ones) have explicit or de-facto anti-AI-patch policies. A clean, small Helios support patch can be rejected on authorship grounds regardless of quality. This is a contested and unstable norm; it may relax, it may tighten — either way, you can't build on it.
+
+**Therefore:** Helios software planning must assume zero upstream cooperation. If upstream happens to accept a patch, great — a bonus. But the plan has to work without it.
+
+### What This Changes
+
+The ecosystem target isn't "Rust in general" or "C software in general." It's:
+
+1. **Helios-native software, in-tree.** The core toolkit (`ls`, `cat`, shell, editor, init, package manager) is authored for Helios and maintained in the Helios repo or sibling repos. Self-contained.
+
+2. **`no_std` Rust as the natural surface.** The `no_std` ecosystem (embedded Rust, RTOS crates, HAL-ish libraries) already assumes minimal or absent OS. Crates like `heapless`, `hashbrown` (with `alloc` feature), `postcard`, `embedded-hal`, `serde` (with `alloc`), most `nom`-based parsers work on Helios without patches. This is a richer ecosystem than people assume — modern Rust has been going `no_std`-first for years.
+
+3. **Vendored crates for specific needs.** When we need a crate that has non-trivial upstream churn (a crypto lib, a specific parser), vendor a pinned version. `cargo vendor` or a Git submodule. Update on our schedule, not theirs. Not a fork — a snapshot.
+
+4. **POSIX shim as escape hatch, not foundation.** For specific legacy software (`vim`, `sqlite`, a language runtime), ship a Helios-libc shim and link the binary against it. One-program granularity. Not a system-wide POSIX emulation.
+
+### What Helios Is NOT
+
+Helios is not "the OS that runs all of Rust." It is not trying to be the substrate for the mainstream software ecosystem. It's not competing with Linux for "daily driver" position.
+
+**Helios is the graph-native OS for new software designed around typed edges and capabilities.** The curated in-tree toolkit plus `no_std` Rust covers a lot of interesting ground, and the escape hatch covers the rest. That's the scope. Accepting it is part of the thesis — not a compromise but a commitment.
+
+### The Silver Lining
+
+`no_std` Rust is a healthier ecosystem around AI-assisted contributions than the broader open-source world. It's smaller, more pragmatic, often solo-maintainer, and tends to care more about working code than authorial politics. If Helios engages with that part of the ecosystem deliberately — contributing code where welcomed, using existing crates where they work, not fighting the battles that can't be won — there's real room to grow.
+
+The existential risk isn't the AI-contribution politics itself. It's pretending the politics don't exist and planning as though they'll resolve in our favor. They might not. Design for the constraint, and the rest follows.
+
 ---
 
 *See also: [capability-edges.md](../design/capability-edges.md) for the cap model, [userspace-tiers.md](../design/userspace-tiers.md) for the three-tier software architecture, [rust-std.md](rust-std.md) for Rust-specific porting strategy.*
