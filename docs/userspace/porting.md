@@ -139,6 +139,40 @@ Helios is not "the OS that runs all of Rust." It is not trying to be the substra
 
 **Helios is the graph-native OS for new software designed around typed edges and capabilities.** The curated in-tree toolkit plus `no_std` Rust covers a lot of interesting ground, and the escape hatch covers the rest. That's the scope. Accepting it is part of the thesis — not a compromise but a commitment.
 
+### Distinctive vs Commodity
+
+The principle "self-contained in-tree" is not purity — it's scope discipline. The test:
+
+- **Distinctive** (in-tree): graph ops, cap checks, helios-specific APIs, init, shell, core toolkit, syscall bindings. These are *the thing that makes Helios Helios*. Writing them is not wheel-reinventing; it's writing the wheel for the first time.
+- **Commodity** (vendored upstream): parsers (`nom`), allocators, data structures (`hashbrown`, `heapless`), cryptographic primitives (`sha2`, `ed25519-dalek`), serialization (`serde` + `postcard`). Well-solved problems where the correct answer is "use the existing crate."
+
+Rewriting commodity code isn't virtuous, it's a waste of effort that also delays Helios's distinctive work.
+
+### Selecting Crates: The AI-OK Filter
+
+Before vendoring a commodity crate, screen for:
+
+1. **Stated AI-contribution policy.** Check `CONTRIBUTING.md`, issue templates, public statements. Explicit welcoming (or at minimum neutrality) is a green flag.
+2. **Maintainer dogfooding.** Maintainers who use AI tools themselves are structurally aligned with AI-assisted contribution.
+3. **License clauses.** Some licenses (and license addenda) now include AI-restriction clauses. Respect them — don't vendor a crate whose license excludes AI-assisted use.
+4. **Community vibe.** Public blow-ups about AI contributions are a yellow flag even if the official policy is silent.
+
+If a crate passes all four: vendor + feel free to contribute fixes upstream.
+
+If it partially passes: vendor + maintain privately, avoid upstreaming.
+
+If it clearly fails: find an alternative crate.
+
+This isn't adversarial — it's just picking ecosystem partners who are structurally compatible with how Helios is being built. Nothing is gained by provoking a fight over a crate that has alternatives. (Most commodity problems have several crates; the filter usually narrows to one or two candidates, not zero.)
+
+### The Politics: A Note on Reality
+
+A sizeable chunk of the open-source world has adopted a categorical anti-AI-contribution stance, including high-profile projects whose actual practice is more pragmatic. The "open slopware" list — targeting major OSes including Linux and FreeBSD — is broad enough to be diagnostic: it's a tribal marker, not a coherent contribution-quality policy.
+
+Legitimate concern sits underneath the maximalist stance: maintainer burnout from low-quality AI-generated issues/PRs is real. The defensive response ("no AI ever") is understandable even where it's badly calibrated.
+
+Helios's response is to route around the politics entirely. Don't argue, don't crusade, don't try to change minds. Pick partners who are already aligned; vendor quietly where needed; build on paths that don't depend on contested acceptance. The ecosystem we can actually work with is smaller than the universe of Rust crates, but it's still rich. Focus there.
+
 ### The Silver Lining
 
 `no_std` Rust is a healthier ecosystem around AI-assisted contributions than the broader open-source world. It's smaller, more pragmatic, often solo-maintainer, and tends to care more about working code than authorial politics. If Helios engages with that part of the ecosystem deliberately — contributing code where welcomed, using existing crates where they work, not fighting the battles that can't be won — there's real room to grow.

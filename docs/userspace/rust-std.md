@@ -22,21 +22,39 @@ Rust's `core` + `alloc` are OS-independent and port to Helios freely. `std` is t
 
 ## Three Strategies
 
-### Strategy A: `helios-std` — A Parallel Ecosystem
+### Strategy A: `helios-std` — The Rust-Native "libc" (Primary Target)
 
-Ship a Helios-native stdlib, `helios-std`, that's NOT a Rust `std` reimplementation. Programs either link `helios-std` (native) or don't have a stdlib (everything they need from `core`/`alloc`/their own crates).
+Ship a Helios-native stdlib, `helios-std`, positioned explicitly as **what you link against instead of libc when targeting Helios**. It is not a `std`-alike; it is the Rust-native equivalent of libc without POSIX baggage.
+
+Every Helios-native Rust program links `helios-std` as its primary dependency. This is the **default target** for new Helios software. Other strategies exist for compatibility, but helios-std is what you reach for first.
+
+What it provides:
+- **Syscall bindings** — raw and typed wrappers for `SYS_READ_NODE`, `SYS_WRITE_NODE`, `SYS_LIST_EDGES`, `SYS_FOLLOW_EDGE`, etc.
+- **Graph primitives** — `Node`, `Edge`, `NodeId`, `Cap` types mapping directly to kernel concepts
+- **Capability helpers** — check/request/delegate caps, walk one's own outgoing edges
+- **I/O** — node-content streams (not file streams), UART/framebuffer access where capped, TCP sockets (mapping the kernel's socket API)
+- **Allocator** — global allocator that requests pages from the kernel via `SYS_MAP_NODE` (or similar)
+- **Entry/exit** — `#[no_mangle] extern "C" fn _start()`, panic handler, exit code marshalling
+- **Core re-exports** — `alloc::String`, `alloc::Vec`, etc. (no `std::` anything)
+
+What it does NOT provide:
+- POSIX file descriptors (use node IDs)
+- POSIX paths (use graph traversal)
+- POSIX fork/exec (use task spawning via graph)
+- Any implicit ambient authority (every syscall goes through cap checks)
+
+**Recommended for:** all Helios-native Rust software — the toolkit, user-mode apps, eventually helios-native networked services. **This is the default choice for new Rust-on-Helios work.**
 
 Pros:
-- Clean. No POSIX baggage leaks in.
-- First-class graph primitives (`Node`, `Edge`, `Cap`).
-- Simpler to implement than a `std` port.
+- Clean, graph-native, no POSIX leakage
+- Small, focused API surface
+- Compatible with `no_std` Rust crates via `core` + `alloc`
+- Simpler to implement than porting `std`
+- Evolves freely with Helios — not chained to upstream `std`
 
 Cons:
-- Ecosystem fragmentation. Every Rust crate that uses `std::fs` etc. needs rewriting.
-- `cargo`'s happy path is `std` — losing it is a tooling papercut.
-- Many great crates can't be used without significant porting effort.
-
-**Recommended for:** core Helios-authored tools (`ls`, `cat`, shell, etc.) written specifically for Helios. First wave of graph-native apps.
+- Crates that use `std::fs` / `std::process` / `std::net` can't be consumed as-is (bridge via Strategy B or C if needed)
+- Unfamiliar to Rust developers who expect `std`
 
 ### Strategy B: `riscv64-helios` Rust Target
 
@@ -85,13 +103,13 @@ Cons:
 
 ## The Triple Coexistence
 
-A mature Helios Rust ecosystem has all three:
+A mature Helios Rust ecosystem has all three, with a clear primary:
 
-- `helios-std` for **native apps** built for Helios (most of the toolkit)
-- `riscv64-helios` target for **portable Rust crates** that want to work on Helios without hating their lives
-- POSIX shim target for **legacy-Rust binaries** that need to run with minimum porting effort
+- **`helios-std`** — the default. The Rust-native libc for Helios. Most native software lives here.
+- **`riscv64-helios` target** — for portable Rust crates that want to work on Helios without rewriting to `helios-std`. Lets you pull in commodity `no_std`-or-`std`-using crates (parsers, hashmaps, crypto) with graph-aware primitives available alongside.
+- **POSIX shim target** — for specific legacy Rust binaries where rewriting is not practical. Escape hatch, not default.
 
-Libraries bridge: the `helios` crate exposes graph/cap/node types, usable by programs targeting any of the three strategies.
+Libraries bridge: the `helios` core crate exposes `Node`, `Edge`, `NodeId`, `Cap` types, usable from any of the three strategies — so even a Strategy B or C program can reach for graph-native primitives when it wants them.
 
 ## `helios-std` First
 
@@ -117,6 +135,21 @@ Cargo-built Rust apps (Strategy A-compatible) need:
 A `helios-std` crate + a set of `no_std`-capable dependencies covers a lot. Think `serde_json` (supports `no_std` via `alloc`), `hashbrown` (no_std), core networking crates (with Helios-aware replacements).
 
 Missing entirely for a while: `tokio`, `reqwest`, `actix`. Anything that wants a kernel-thread-pool + POSIX I/O. These require Strategy B or C.
+
+### Vendoring Commodity Crates
+
+For well-solved commodity problems, don't reinvent — vendor. See [porting.md](porting.md#distinctive-vs-commodity) for the distinctive-vs-commodity split and [porting.md](porting.md#selecting-crates-the-ai-ok-filter) for the AI-OK selection filter. Vendored crates live in `vendor/` in the Helios workspace, pinned to specific versions, updated manually.
+
+Candidates known to be likely good fits:
+- `hashbrown` (no_std hashmap, from the stdlib)
+- `heapless` (no_std data structures)
+- `postcard` (no_std serde serializer, wire-format friendly)
+- `nom` (parser combinators, works no_std)
+- `sha2` / `sha3` / `blake3` (cryptographic hashes)
+- `ed25519-dalek` (signatures)
+- `serde` + `serde_json` with `alloc` feature
+
+Each is screened against the AI-OK filter before vendoring.
 
 ## What a First Native Rust App Looks Like
 
