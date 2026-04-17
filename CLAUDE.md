@@ -139,22 +139,51 @@ See `README.md` for the user-facing list. Current front lines:
 
 If you're a worker spawned to do Helios work, you don't have the conversation context. Key things to know:
 
-- Follow [`docs/design/philosophy.md`](docs/design/philosophy.md) principles. When in doubt, don't break the thesis.
+- **Read [`docs/`](docs/) before coding.** Especially [`docs/design/philosophy.md`](docs/design/philosophy.md) for the load-bearing thesis, and any design doc relevant to your task. Don't re-derive decisions that are already written down.
+- **Update docs after shipping.** See the "After Shipping Any Feature" section above. README, design docs, and this file all need to reflect what you built. Commit docs in the same commit as code.
+- **Don't break the thesis.** The four invariants at the top of this file are load-bearing; if your task seems to require violating one, stop and document why in the relevant design doc before proceeding.
 - Always `cargo build --release` before `make run`.
 - Network config is fixed: IP 10.0.2.15, gateway 10.0.2.2, hostfwd 5555→80.
 - Commit with descriptive messages. Push to main.
 - Take a screenshot of the final state and save to `screenshots/m{NN}-{name}.png`.
 - For any browser-interactive task, request the `browser-use` capability from the spawning origin — don't fall back to Safari.
+- **This repo is PUBLIC.** Commit messages, issue descriptions, and file contents are world-readable. Use neutral language; never attribute design input to specific people by name.
+
+## Before Starting Any Feature
+
+**Read [`docs/`](docs/) first.** Most significant design decisions have already been made and captured:
+
+- [`docs/design/philosophy.md`](docs/design/philosophy.md) — the load-bearing thesis
+- [`docs/design/capability-edges.md`](docs/design/capability-edges.md) — security model, syscall ABI, cap labels
+- [`docs/design/userspace-tiers.md`](docs/design/userspace-tiers.md) — kernel/native/ported boundaries
+- [`docs/userspace/porting.md`](docs/userspace/porting.md) — vendor-vs-write, AI-OK filter, POSIX shim rules
+- [`docs/userspace/rust-std.md`](docs/userspace/rust-std.md) — helios-std as primary, rustc target strategy
+
+If the answer isn't in `docs/`, **check whether there's a decision on an adjacent question** — often design is implicit ("we chose X for Y, so Z probably follows"). If still uncertain, write a proposal to the relevant `docs/design/*.md` file *before* coding. Design-first, code-second.
+
+Don't re-derive decisions from scratch. Don't silently assume. Don't skip reading docs because "it's just a small feature." The docs exist so you don't have to rediscover the thesis every time.
+
+## After Shipping Any Feature
+
+**Keep the documentation surface current.** A shipped feature is not done until docs reflect it:
+
+- **[`README.md`](README.md)** — update the "what it has" list if there's a user-visible new capability. Add a screenshot if the feature is visual.
+- **[`docs/design/*.md`](docs/design/)** — if the feature implements something the design docs planned, update the design doc's status header and "next steps" / "milestone map" sections. If the implementation revealed a new design decision, document it inline.
+- **[`docs/kernel/`](docs/kernel/)** or **[`docs/userspace/`](docs/userspace/)** — when a new kernel subsystem or userspace pattern lands, document it there (create the file if needed). Especially important for ABI changes.
+- **This file (`CLAUDE.md`)** — if there's a new gotcha, convention, file structure, or common failure mode, add it to the relevant section (usually "Common Gotchas" or "Key Conventions"). Also update "Milestone Status".
+- **Commit docs alongside code**, not in a separate PR. A code commit without doc updates is incomplete.
+
+**If the feature invalidates an earlier design decision**, don't silently change behavior — update the old design doc to reflect the new reality, cite the milestone that changed it, and explain why. Design evolution is allowed; design rewriting-as-if-history-didn't-happen is not.
 
 ## Where to Ask Design Questions
 
-If a design decision is significant:
-1. Read `docs/design/` first — the answer might be there.
+If a design decision is significant and not yet documented:
+1. Read `docs/design/` first — the answer might already be there under a related topic.
 2. If it's new, write a short proposal as a section in the relevant `docs/design/*.md` file.
 3. Commit with the proposed change so the reasoning is preserved even if the implementation changes.
 
-Design conversations that happen only in chat get lost. The repo is source of truth.
+Design conversations that happen only in chat get lost. **The repo is source of truth.** When in doubt, write it down, commit it, push it.
 
 ---
 
-*Last reviewed: 2026-04-16 (post-M28, pre-M29 user mode).*
+*Last reviewed: 2026-04-16 (post-M30 expanded syscall ABI).*
