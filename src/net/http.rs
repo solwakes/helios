@@ -441,6 +441,9 @@ fn route_read(path: &str) -> RouteResult {
     if path == "/" {
         return ok_json(overview_json().into_bytes());
     }
+    if path == "/dashboard" || path == "/dashboard/" {
+        return ok_html(super::dashboard::DASHBOARD_HTML.as_bytes().to_vec());
+    }
     if path == "/stats" {
         return ok_json(stats_json().into_bytes());
     }
@@ -679,6 +682,10 @@ fn ok_json(body: Vec<u8>) -> RouteResult {
     (200, "OK", "application/json; charset=utf-8", body)
 }
 
+fn ok_html(body: Vec<u8>) -> RouteResult {
+    (200, "OK", "text/html; charset=utf-8", body)
+}
+
 fn err_plain(code: u16, text: &'static str, msg: &str) -> RouteResult {
     (
         code,
@@ -754,10 +761,12 @@ fn overview_json() -> String {
             super::OUR_IP[3]
         ),
     );
+    obj.str_field("dashboard", "/dashboard");
     obj.raw_field("endpoints", |o| {
         let mut a = json::ArrayBuilder::new(o);
         a.str_item("GET /");
         a.str_item("GET /ping");
+        a.str_item("GET /dashboard");
         a.str_item("GET /stats");
         a.str_item("GET /nodes");
         a.str_item("GET /nodes/{id}");
@@ -1023,6 +1032,7 @@ fn send_full(sock: tcp::SocketHandle, status: u16, status_text: &str, content_ty
          Server: helios/{}\r\n\
          Content-Type: {}\r\n\
          Content-Length: {}\r\n\
+         Cache-Control: no-cache\r\n\
          Connection: close\r\n\
          \r\n",
         status,

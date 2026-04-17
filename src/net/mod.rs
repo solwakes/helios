@@ -7,6 +7,7 @@
 ///   Netmask: 255.255.255.0
 
 pub mod arp;
+pub mod dashboard;
 pub mod eth;
 pub mod http;
 pub mod icmp;
