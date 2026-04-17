@@ -8,6 +8,16 @@ written in Rust, targeting RISC-V 64-bit, running on QEMU.
 
 ![graph visualization](screenshots/m12-with-tasks.png)
 
+## documentation
+
+see [`docs/`](docs/) for design rationale and architecture notes:
+
+- [philosophy](docs/design/philosophy.md) — "everything is a memory" thesis
+- [capability edges](docs/design/capability-edges.md) — graph-native security model (M29+)
+- [userspace tiers](docs/design/userspace-tiers.md) — kernel / native / ported, and the POSIX tension
+- [porting software](docs/userspace/porting.md) — bringing non-helios programs in
+- [rust on helios](docs/userspace/rust-std.md) — std, targets, and the ecosystem path
+
 ## what it has
 
 - **RISC-V 64-bit** bare-metal kernel with OpenSBI
