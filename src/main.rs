@@ -116,6 +116,9 @@ pub extern "C" fn kmain(hart_id: usize, _dtb: usize) -> ! {
     // Initialize IPC subsystem (creates ipc directory node)
     ipc::init();
 
+    // Initialize the /user subgraph (home for externally-POSTed nodes)
+    graph::user::init();
+
     // Initialize cooperative multitasking (creates task #0 = shell)
     task::init();
 

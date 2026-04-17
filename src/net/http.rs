@@ -1,29 +1,46 @@
-/// Minimal HTTP/1.1 server — serves the Helios graph as JSON over TCP.
+/// Minimal HTTP/1.1 server — serves the Helios graph as JSON over TCP,
+/// and (M27) accepts write operations to mutate it from outside.
 ///
 /// Design: the server is driven from the main polling loop via `http::tick()`.
 /// When a listener is registered, each tick does a non-blocking `accept()` and
 /// drains bytes from each accepted connection into a per-socket request buffer.
-/// When the buffer contains `\r\n\r\n`, we parse the request line, route, build
-/// a response, send it, and close the socket.
+/// We parse headers as soon as `\r\n\r\n` shows up; if Content-Length is set
+/// we keep reading until the full body is in the buffer, then route.
 ///
 /// Close-after-response (HTTP/1.0 style) — no keep-alive, no chunked encoding.
-/// Body is built in a single `String` up to a configurable cap.
+/// Response body is built in a single `Vec<u8>` up to a configurable cap.
 ///
 /// Routes:
-///   GET /ping         plain text "pong\n"
-///   GET /             JSON overview
-///   GET /stats        JSON {uptime, tick_count, heap, net, tcp, http}
-///   GET /nodes        JSON array of {id, type, name, edges}
-///   GET /nodes/{id}   JSON {id, type, name, content, edges:[...]}
-///   GET /tree         JSON nested tree starting at root (bounded depth)
+///   GET    /ping                    plain text "pong\n"
+///   GET    /                        JSON overview
+///   GET    /stats                   JSON {uptime, tick_count, heap, net, tcp, http}
+///   GET    /nodes                   JSON array of {id, type, name, edges}
+///   GET    /nodes/{id}              JSON {id, type, name, content, edges:[...]}
+///   GET    /tree                    JSON nested tree starting at root
+///   POST   /nodes                   create a node under /user
+///                                     body (form): type=note&name=X&content=Y
+///                                     → 201 {id, name, type}
+///   PUT    /nodes/{id}/content      replace node content (body = raw bytes)
+///                                     → 200 {id, content_bytes}
+///   DELETE /nodes/{id}              remove node + edges → 200 {deleted}
+///   POST   /nodes/{id}/edges        add edge, body (form): target=N[&label=L]
+///                                     → 200 {from, to, label}
+///
+/// Write protections:
+///   * Nodes with ID ≤ 15 are system-managed and refuse writes/deletes (403).
+///   * PUT /content only succeeds on text/dir types, or nodes that we tracked
+///     as externally-created (see graph::user).
 
 use super::json;
 use super::tcp;
+use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-/// Max bytes we'll buffer per-request before giving up (and returning 400).
-const MAX_REQ_BYTES: usize = 4096;
+/// Max bytes we'll buffer per-request (headers + body combined).
+const MAX_REQ_BYTES: usize = 64 * 1024;
+/// Max bytes we'll accept as a request body after Content-Length parsing.
+const MAX_BODY_BYTES: usize = 32 * 1024;
 /// Max bytes we'll emit in a single response body.
 const MAX_RESP_BYTES: usize = 64 * 1024;
 /// Max concurrent in-flight HTTP connections we're willing to track.
@@ -32,6 +49,11 @@ const MAX_CONNS: usize = 16;
 const TREE_MAX_DEPTH: usize = 6;
 /// Max nodes emitted in /tree response (hard cap, independent of depth).
 const TREE_MAX_NODES: usize = 512;
+/// IDs at or below this are considered system-managed and protected from
+/// external writes/deletes. Bootstrap creates IDs 1..=11 or so (root, system,
+/// devices, uart0, fb0, memory, timer, cpu, dashboard, net0, ipc, user).
+/// Keep a little slack for the http server node itself.
+const PROTECTED_MAX_ID: u64 = 15;
 
 /// A connection that has been accepted but hasn't finished receiving its
 /// request yet (or has, and we're waiting to close).
@@ -41,6 +63,9 @@ struct Conn {
     rxbuf: Vec<u8>,
     /// Start time (us) for request age / timeouts.
     start_us: u64,
+    /// After the blank line is seen: (body_start_offset, content_length).
+    /// body_start is the index just past the `\r\n\r\n` separator.
+    parsed: Option<(usize, usize)>,
 }
 
 pub struct HttpStats {
@@ -48,6 +73,7 @@ pub struct HttpStats {
     pub bytes_out: u64,
     pub errors: u64,
     pub not_found: u64,
+    pub writes: u64,
 }
 
 static mut STATS: HttpStats = HttpStats {
@@ -55,6 +81,7 @@ static mut STATS: HttpStats = HttpStats {
     bytes_out: 0,
     errors: 0,
     not_found: 0,
+    writes: 0,
 };
 
 #[allow(static_mut_refs)]
@@ -118,13 +145,10 @@ pub fn stop() {
             Some(s) => s,
             None => return,
         };
-        // Close all in-flight conns.
         for c in srv.conns.iter() {
             tcp::close(c.sock);
         }
-        // Remove listener.
         tcp::tcp_unlisten(srv.port);
-        // Remove graph node.
         if srv.node_id != 0 {
             crate::graph::get_mut().remove_node(srv.node_id);
         }
@@ -153,6 +177,7 @@ pub fn tick() {
                         sock,
                         rxbuf: Vec::new(),
                         start_us: tcp::now_us(),
+                        parsed: None,
                     });
                 }
                 None => break,
@@ -176,13 +201,9 @@ pub fn tick() {
 }
 
 /// Returns true if the conn should be dropped from the tracking table.
-/// Note: `send_full` / `send_simple` both call tcp::close() internally — after
-/// calling them, we're done with this conn and return true. The TCP stack
-/// drives the FIN handshake to completion on its own.
 fn process_conn(c: &mut Conn) -> bool {
     // Check socket state — if the peer already RST'd, give up.
-    let state = tcp::socket_state(c.sock);
-    if state.is_none() {
+    if tcp::socket_state(c.sock).is_none() {
         return true;
     }
 
@@ -200,8 +221,7 @@ fn process_conn(c: &mut Conn) -> bool {
     loop {
         match tcp::recv(c.sock, &mut tmp) {
             Some(0) => {
-                // Peer closed (half-closed). We can still try to parse what
-                // we have — curl sends request then closes its write side.
+                // Peer closed (half-closed). Try to parse what we have.
                 peer_closed = true;
                 break;
             }
@@ -213,58 +233,105 @@ fn process_conn(c: &mut Conn) -> bool {
                 }
                 c.rxbuf.extend_from_slice(&tmp[..n]);
             }
-            None => break, // no more data right now
+            None => break,
         }
     }
 
-    if !request_complete(&c.rxbuf) {
+    // Have we seen the end of headers yet?
+    if c.parsed.is_none() {
+        match find_header_end(&c.rxbuf) {
+            Some(hend) => {
+                let cl = parse_content_length(&c.rxbuf[..hend]).unwrap_or(0);
+                if cl > MAX_BODY_BYTES {
+                    send_simple(c.sock, 413, "Payload Too Large", "body too large\n");
+                    unsafe { STATS.errors += 1; }
+                    return true;
+                }
+                c.parsed = Some((hend, cl));
+            }
+            None => {
+                if peer_closed {
+                    unsafe { STATS.errors += 1; }
+                    tcp::close(c.sock);
+                    return true;
+                }
+                return false; // keep waiting
+            }
+        }
+    }
+
+    let (hend, cl) = c.parsed.unwrap();
+
+    // Do we have the full body yet?
+    if c.rxbuf.len() < hend + cl {
         if peer_closed {
-            // Peer gave up without sending a full request.
+            // Client closed without finishing the body → abort.
             unsafe { STATS.errors += 1; }
             tcp::close(c.sock);
             return true;
         }
-        // Keep waiting.
         return false;
     }
 
-    // Parse + respond.
-    match parse_request(&c.rxbuf) {
-        Some((method, path)) => {
-            unsafe { STATS.requests += 1; }
-            let (status, status_text, content_type, body) = route(method, &path);
-            if status == 404 {
-                unsafe { STATS.not_found += 1; }
-            }
-            send_full(c.sock, status, status_text, content_type, &body);
-        }
+    // Full request is buffered. Parse request line, route, respond.
+    let (method, path) = match parse_request_line(&c.rxbuf[..hend]) {
+        Some(v) => v,
         None => {
             unsafe { STATS.errors += 1; }
             send_simple(c.sock, 400, "Bad Request", "malformed request\n");
+            return true;
         }
-    }
+    };
+    let body = &c.rxbuf[hend..hend + cl];
+    let peer_ip = tcp::socket_peer(c.sock).map(|(ip, _)| ip).unwrap_or([0; 4]);
 
-    // Response sent and socket close() initiated inside send_full. Drop
-    // our tracking entry — TCP will flush the FIN handshake asynchronously.
+    unsafe { STATS.requests += 1; }
+    let (status, status_text, content_type, response_body) =
+        route(&method, &path, body, peer_ip);
+    match status {
+        404 => unsafe { STATS.not_found += 1; },
+        200 | 201 if method != "GET" && method != "HEAD" => unsafe { STATS.writes += 1; },
+        _ => {}
+    }
+    send_full(c.sock, status, status_text, content_type, &response_body);
     true
 }
 
-/// Does the buffer contain a full request header block?
-fn request_complete(buf: &[u8]) -> bool {
-    // Look for CRLF CRLF.
+// ── Header / body parsing ────────────────────────────────────────────────────
+
+/// Locate the end of the header block (the first byte of the body, just past
+/// `\r\n\r\n`). Returns None if the blank line hasn't arrived yet.
+fn find_header_end(buf: &[u8]) -> Option<usize> {
     if buf.len() < 4 {
-        return false;
+        return None;
     }
-    for i in 0..buf.len() - 3 {
-        if buf[i] == b'\r' && buf[i + 1] == b'\n' && buf[i + 2] == b'\r' && buf[i + 3] == b'\n' {
-            return true;
+    for i in 0..=buf.len() - 4 {
+        if buf[i] == b'\r' && buf[i + 1] == b'\n'
+            && buf[i + 2] == b'\r' && buf[i + 3] == b'\n'
+        {
+            return Some(i + 4);
         }
     }
-    false
+    None
 }
 
-/// Parse just the request line. Returns (method, path).
-fn parse_request(buf: &[u8]) -> Option<(String, String)> {
+/// Find `Content-Length:` (case-insensitive) in the header block and return
+/// its integer value. Missing/invalid → None.
+fn parse_content_length(headers: &[u8]) -> Option<usize> {
+    let s = core::str::from_utf8(headers).ok()?;
+    for line in s.split("\r\n") {
+        if let Some(pos) = line.find(':') {
+            let key = &line[..pos];
+            if key.eq_ignore_ascii_case("content-length") {
+                return line[pos + 1..].trim().parse::<usize>().ok();
+            }
+        }
+    }
+    None
+}
+
+/// Parse just the request line. Returns (method, path) as owned Strings.
+fn parse_request_line(buf: &[u8]) -> Option<(String, String)> {
     // Find end of first line.
     let mut eol = None;
     for i in 0..buf.len().saturating_sub(1) {
@@ -282,59 +349,369 @@ fn parse_request(buf: &[u8]) -> Option<(String, String)> {
     Some((method, path))
 }
 
+// ── URL decoding + form-body parsing ─────────────────────────────────────────
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Decode a percent-encoded string (application/x-www-form-urlencoded flavor:
+/// `+` → space, `%XX` → byte). Invalid escapes are passed through unchanged.
+fn url_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'+' {
+            out.push(b' ');
+            i += 1;
+        } else if b == b'%' && i + 2 < bytes.len() {
+            match (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                (Some(hi), Some(lo)) => {
+                    out.push((hi << 4) | lo);
+                    i += 3;
+                }
+                _ => {
+                    out.push(b);
+                    i += 1;
+                }
+            }
+        } else {
+            out.push(b);
+            i += 1;
+        }
+    }
+    match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
+    }
+}
+
+/// Parse a form-encoded body into a `key → value` map. Keys/values are
+/// URL-decoded; duplicate keys keep the last occurrence.
+fn parse_form(body: &[u8]) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    let s = match core::str::from_utf8(body) {
+        Ok(s) => s,
+        Err(_) => return map,
+    };
+    for pair in s.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (k, v) = match pair.find('=') {
+            Some(pos) => (&pair[..pos], &pair[pos + 1..]),
+            None => (pair, ""),
+        };
+        map.insert(url_decode(k), url_decode(v));
+    }
+    map
+}
+
 // ── Routing ──────────────────────────────────────────────────────────────────
 
-/// Returns (status, status_text, content_type, body_bytes).
-fn route(method: String, path: &str) -> (u16, &'static str, &'static str, Vec<u8>) {
-    // Only GET/HEAD supported.
-    if method != "GET" && method != "HEAD" {
-        let body = b"405 method not allowed\n".to_vec();
-        return (405, "Method Not Allowed", "text/plain; charset=utf-8", body);
-    }
+type RouteResult = (u16, &'static str, &'static str, Vec<u8>);
 
+fn route(method: &str, path: &str, body: &[u8], peer_ip: [u8; 4]) -> RouteResult {
     // Strip query string (we don't use them yet).
     let path = match path.find('?') {
         Some(i) => &path[..i],
         None => path,
     };
 
+    match method {
+        "GET" | "HEAD" => route_read(path),
+        "POST" => route_post(path, body, peer_ip),
+        "PUT" => route_put(path, body),
+        "DELETE" => route_delete(path),
+        _ => err_plain(405, "Method Not Allowed", "405 method not allowed\n"),
+    }
+}
+
+fn route_read(path: &str) -> RouteResult {
     if path == "/ping" {
-        return (200, "OK", "text/plain; charset=utf-8", b"pong\n".to_vec());
+        return ok_text("pong\n");
     }
     if path == "/" {
-        return (200, "OK", "application/json; charset=utf-8", overview_json().into_bytes());
+        return ok_json(overview_json().into_bytes());
     }
     if path == "/stats" {
-        return (200, "OK", "application/json; charset=utf-8", stats_json().into_bytes());
+        return ok_json(stats_json().into_bytes());
     }
     if path == "/nodes" {
-        return (200, "OK", "application/json; charset=utf-8", nodes_json().into_bytes());
+        return ok_json(nodes_json().into_bytes());
     }
     if path == "/tree" {
-        return (200, "OK", "application/json; charset=utf-8", tree_json().into_bytes());
+        return ok_json(tree_json().into_bytes());
     }
     if let Some(rest) = path.strip_prefix("/nodes/") {
         if let Ok(id) = rest.parse::<u64>() {
             match node_json(id) {
-                Some(body) => return (200, "OK", "application/json; charset=utf-8", body.into_bytes()),
-                None => {
-                    let body = alloc::format!("{{\"error\":\"node {} not found\"}}\n", id);
-                    return (404, "Not Found", "application/json; charset=utf-8", body.into_bytes());
+                Some(body) => return ok_json(body.into_bytes()),
+                None => return not_found_id(id),
+            }
+        }
+    }
+    not_found_path(path)
+}
+
+fn route_post(path: &str, body: &[u8], peer_ip: [u8; 4]) -> RouteResult {
+    if path == "/nodes" {
+        return handle_create_node(body, peer_ip);
+    }
+    if let Some(rest) = path.strip_prefix("/nodes/") {
+        if let Some(slash) = rest.find('/') {
+            let id_str = &rest[..slash];
+            let sub = &rest[slash..];
+            if sub == "/edges" {
+                if let Ok(id) = id_str.parse::<u64>() {
+                    return handle_add_edge(id, body);
                 }
             }
         }
     }
+    not_found_path(path)
+}
 
+fn route_put(path: &str, body: &[u8]) -> RouteResult {
+    if let Some(rest) = path.strip_prefix("/nodes/") {
+        if let Some(slash) = rest.find('/') {
+            let id_str = &rest[..slash];
+            let sub = &rest[slash..];
+            if sub == "/content" {
+                if let Ok(id) = id_str.parse::<u64>() {
+                    return handle_put_content(id, body);
+                }
+            }
+        }
+    }
+    not_found_path(path)
+}
+
+fn route_delete(path: &str) -> RouteResult {
+    if let Some(rest) = path.strip_prefix("/nodes/") {
+        if let Ok(id) = rest.parse::<u64>() {
+            return handle_delete_node(id);
+        }
+    }
+    not_found_path(path)
+}
+
+// ── Write handlers ───────────────────────────────────────────────────────────
+
+fn handle_create_node(body: &[u8], peer_ip: [u8; 4]) -> RouteResult {
+    let form = parse_form(body);
+    let type_str = form
+        .get("type")
+        .map(|s| s.as_str())
+        .unwrap_or("note")
+        .to_string();
+    let name = match form.get("name") {
+        Some(n) if !n.is_empty() => n.clone(),
+        _ => return err_plain(400, "Bad Request", "missing 'name' field\n"),
+    };
+    let content = form.get("content").cloned().unwrap_or_default();
+
+    let type_tag = match type_str.as_str() {
+        "note" | "text" => crate::graph::NodeType::Text,
+        "dir" | "directory" => crate::graph::NodeType::Directory,
+        _ => {
+            return err_plain(
+                400,
+                "Bad Request",
+                "unsupported 'type'; use 'note' or 'dir'\n",
+            )
+        }
+    };
+
+    let user_dir = crate::graph::user::user_dir_id();
+    if user_dir == 0 {
+        return err_plain(
+            500,
+            "Internal Server Error",
+            "/user subgraph not initialized\n",
+        );
+    }
+
+    let g = crate::graph::get_mut();
+    let id = g.create_node(type_tag, &name);
+    if let Some(node) = g.get_node_mut(id) {
+        node.content = content.into_bytes();
+    }
+    g.add_edge(user_dir, "child", id);
+    crate::graph::user::register(id, peer_ip);
+
+    let mut out = String::with_capacity(96);
+    let mut obj = json::ObjectBuilder::new(&mut out);
+    obj.u64_field("id", id);
+    obj.str_field("name", &name);
+    obj.str_field("type", &type_str);
+    obj.finish();
+    out.push('\n');
+    (
+        201,
+        "Created",
+        "application/json; charset=utf-8",
+        out.into_bytes(),
+    )
+}
+
+fn handle_put_content(id: u64, body: &[u8]) -> RouteResult {
+    if id <= PROTECTED_MAX_ID {
+        return err_plain(
+            403,
+            "Forbidden",
+            "node is system-managed; writes refused\n",
+        );
+    }
+    // Decide up-front whether this node is writable.
+    let is_user = crate::graph::user::is_user_node(id);
+    let g = crate::graph::get_mut();
+    let node = match g.get_node_mut(id) {
+        Some(n) => n,
+        None => return not_found_id(id),
+    };
+    let type_ok = matches!(
+        node.type_tag,
+        crate::graph::NodeType::Text | crate::graph::NodeType::Directory
+    );
+    if !type_ok && !is_user {
+        return err_plain(
+            403,
+            "Forbidden",
+            "writes only allowed on note/dir or externally-created nodes\n",
+        );
+    }
+    node.content = body.to_vec();
+    let bytes = body.len() as u64;
+
+    let mut out = String::with_capacity(64);
+    let mut obj = json::ObjectBuilder::new(&mut out);
+    obj.u64_field("id", id);
+    obj.u64_field("content_bytes", bytes);
+    obj.finish();
+    out.push('\n');
+    (
+        200,
+        "OK",
+        "application/json; charset=utf-8",
+        out.into_bytes(),
+    )
+}
+
+fn handle_delete_node(id: u64) -> RouteResult {
+    if id <= PROTECTED_MAX_ID {
+        return err_plain(
+            403,
+            "Forbidden",
+            "node is system-managed; deletion refused\n",
+        );
+    }
+    let g = crate::graph::get_mut();
+    if !g.nodes.contains_key(&id) {
+        return not_found_id(id);
+    }
+    g.remove_node(id);
+    crate::graph::user::forget(id);
+
+    let mut out = String::with_capacity(32);
+    let mut obj = json::ObjectBuilder::new(&mut out);
+    obj.u64_field("deleted", id);
+    obj.finish();
+    out.push('\n');
+    (
+        200,
+        "OK",
+        "application/json; charset=utf-8",
+        out.into_bytes(),
+    )
+}
+
+fn handle_add_edge(parent_id: u64, body: &[u8]) -> RouteResult {
+    let form = parse_form(body);
+    let target = match form.get("target").and_then(|s| s.parse::<u64>().ok()) {
+        Some(v) => v,
+        None => return err_plain(400, "Bad Request", "missing or invalid 'target'\n"),
+    };
+    let label = form
+        .get("label")
+        .map(|s| s.as_str())
+        .unwrap_or("child")
+        .to_string();
+
+    let g = crate::graph::get_mut();
+    if !g.nodes.contains_key(&parent_id) {
+        return not_found_id(parent_id);
+    }
+    if !g.nodes.contains_key(&target) {
+        return not_found_id(target);
+    }
+    g.add_edge(parent_id, &label, target);
+
+    let mut out = String::with_capacity(64);
+    let mut obj = json::ObjectBuilder::new(&mut out);
+    obj.u64_field("from", parent_id);
+    obj.u64_field("to", target);
+    obj.str_field("label", &label);
+    obj.finish();
+    out.push('\n');
+    (
+        200,
+        "OK",
+        "application/json; charset=utf-8",
+        out.into_bytes(),
+    )
+}
+
+// ── Small response-builder helpers ───────────────────────────────────────────
+
+fn ok_text(s: &str) -> RouteResult {
+    (200, "OK", "text/plain; charset=utf-8", s.as_bytes().to_vec())
+}
+
+fn ok_json(body: Vec<u8>) -> RouteResult {
+    (200, "OK", "application/json; charset=utf-8", body)
+}
+
+fn err_plain(code: u16, text: &'static str, msg: &str) -> RouteResult {
+    (
+        code,
+        text,
+        "text/plain; charset=utf-8",
+        msg.as_bytes().to_vec(),
+    )
+}
+
+fn not_found_id(id: u64) -> RouteResult {
+    let body = alloc::format!("{{\"error\":\"node {} not found\"}}\n", id);
+    (
+        404,
+        "Not Found",
+        "application/json; charset=utf-8",
+        body.into_bytes(),
+    )
+}
+
+fn not_found_path(path: &str) -> RouteResult {
     let body = alloc::format!(
         "{{\"error\":\"not found\",\"path\":\"{}\"}}\n",
         escape_for_format(path)
     );
-    (404, "Not Found", "application/json; charset=utf-8", body.into_bytes())
+    (
+        404,
+        "Not Found",
+        "application/json; charset=utf-8",
+        body.into_bytes(),
+    )
 }
 
 fn escape_for_format(s: &str) -> String {
-    // Minimal escape so we can safely embed `path` in a JSON fragment built
-    // with format!. Covers the few chars that would break the JSON.
     let mut out = String::new();
     for c in s.chars() {
         match c {
@@ -349,7 +726,7 @@ fn escape_for_format(s: &str) -> String {
     out
 }
 
-// ── JSON builders ────────────────────────────────────────────────────────────
+// ── JSON builders (reads) ────────────────────────────────────────────────────
 
 fn overview_json() -> String {
     let g = crate::graph::get();
@@ -379,12 +756,16 @@ fn overview_json() -> String {
     );
     obj.raw_field("endpoints", |o| {
         let mut a = json::ArrayBuilder::new(o);
-        a.str_item("/");
-        a.str_item("/ping");
-        a.str_item("/stats");
-        a.str_item("/nodes");
-        a.str_item("/nodes/{id}");
-        a.str_item("/tree");
+        a.str_item("GET /");
+        a.str_item("GET /ping");
+        a.str_item("GET /stats");
+        a.str_item("GET /nodes");
+        a.str_item("GET /nodes/{id}");
+        a.str_item("GET /tree");
+        a.str_item("POST /nodes");
+        a.str_item("PUT /nodes/{id}/content");
+        a.str_item("DELETE /nodes/{id}");
+        a.str_item("POST /nodes/{parent_id}/edges");
         a.finish();
     });
     obj.finish();
@@ -395,7 +776,6 @@ fn overview_json() -> String {
 fn stats_json() -> String {
     let tick_count = crate::trap::tick_count() as u64;
     let time = crate::arch::riscv64::read_time() as u64;
-    // QEMU virt timer is 10 MHz → microseconds = time / 10.
     let uptime_us = time / 10;
     let uptime_s = uptime_us / 1_000_000;
 
@@ -425,6 +805,7 @@ fn stats_json() -> String {
         let mut h = json::ObjectBuilder::new(o);
         h.u64_field("nodes", g.node_count() as u64);
         h.u64_field("edges", g.edge_count() as u64);
+        h.u64_field("user_nodes", crate::graph::user::count() as u64);
         h.finish();
     });
     obj.raw_field("net", |o| {
@@ -456,6 +837,7 @@ fn stats_json() -> String {
         h.u64_field("bytes_out", http_s.bytes_out);
         h.u64_field("errors", http_s.errors);
         h.u64_field("not_found", http_s.not_found);
+        h.u64_field("writes", http_s.writes);
         h.finish();
     });
     obj.raw_field("tasks", |o| {
@@ -481,7 +863,6 @@ fn stats_json() -> String {
 fn nodes_json() -> String {
     let g = crate::graph::get();
     let mut out = String::with_capacity(2048);
-    // Top-level: { "count": N, "nodes": [ ... ] }
     let mut obj = json::ObjectBuilder::new(&mut out);
     obj.u64_field("count", g.node_count() as u64);
     obj.raw_field("nodes", |o| {
@@ -494,6 +875,7 @@ fn nodes_json() -> String {
                 n.str_field("name", &node.name);
                 n.u64_field("edges", node.edges.len() as u64);
                 n.u64_field("content_bytes", node.content.len() as u64);
+                n.bool_field("user", crate::graph::user::is_user_node(node.id));
                 n.finish();
             });
         }
@@ -513,10 +895,9 @@ fn node_json(id: u64) -> Option<String> {
     obj.str_field("type", &node.type_tag.to_string());
     obj.str_field("name", &node.name);
     obj.u64_field("content_bytes", node.content.len() as u64);
+    obj.bool_field("user", crate::graph::user::is_user_node(node.id));
 
-    // Content — try UTF-8, fallback to byte count note.
     let content_str = node.display_content(g);
-    // Truncate long content to keep responses reasonable.
     let truncated = if content_str.len() > 32 * 1024 {
         let mut t = String::new();
         t.push_str(&content_str[..32 * 1024]);
@@ -534,7 +915,6 @@ fn node_json(id: u64) -> Option<String> {
                 let mut e = json::ObjectBuilder::new(o2);
                 e.str_field("label", &edge.label);
                 e.u64_field("target", edge.target);
-                // Include target name if it resolves.
                 if let Some(tn) = g.get_node(edge.target) {
                     e.str_field("target_name", &tn.name);
                 }
@@ -575,7 +955,6 @@ fn tree_node(out: &mut String, id: u64, depth: usize, visited: &mut Vec<u64>, em
     };
 
     if visited.contains(&id) {
-        // Just a back-reference — emit a shallow stub.
         let mut obj = json::ObjectBuilder::new(out);
         obj.u64_field("id", node.id);
         obj.str_field("name", &node.name);
@@ -593,13 +972,10 @@ fn tree_node(out: &mut String, id: u64, depth: usize, visited: &mut Vec<u64>, em
         obj.u64_field("edges", node.edges.len() as u64);
         obj.raw_field("children", |o| {
             let mut a = json::ArrayBuilder::new(o);
-            // Only follow "child" edges for the tree view, keep it tidy.
-            let mut have_children = false;
             for edge in node.edges.iter() {
                 if edge.label != "child" {
                     continue;
                 }
-                have_children = true;
                 if depth + 1 >= TREE_MAX_DEPTH {
                     a.raw_item(|o2| {
                         let mut e = json::ObjectBuilder::new(o2);
@@ -616,7 +992,6 @@ fn tree_node(out: &mut String, id: u64, depth: usize, visited: &mut Vec<u64>, em
                     });
                 }
             }
-            let _ = have_children;
             a.finish();
         });
         obj.finish();
@@ -627,7 +1002,6 @@ fn tree_node(out: &mut String, id: u64, depth: usize, visited: &mut Vec<u64>, em
 
 // ── Wire I/O: response framing ───────────────────────────────────────────────
 
-/// Send a simple plain-text response (e.g. error pages). Best-effort.
 fn send_simple(sock: tcp::SocketHandle, status: u16, status_text: &str, body: &str) {
     send_full(
         sock,
@@ -639,7 +1013,6 @@ fn send_simple(sock: tcp::SocketHandle, status: u16, status_text: &str, body: &s
 }
 
 fn send_full(sock: tcp::SocketHandle, status: u16, status_text: &str, content_type: &str, body: &[u8]) {
-    // Cap body length.
     let body = if body.len() > MAX_RESP_BYTES {
         &body[..MAX_RESP_BYTES]
     } else {
@@ -658,24 +1031,19 @@ fn send_full(sock: tcp::SocketHandle, status: u16, status_text: &str, content_ty
         content_type,
         body.len()
     );
-    // Send header in small chunks (TCP send() takes one segment at a time up
-    // to MSS; we call it in a loop so the send_buf absorbs everything).
     send_all(sock, header.as_bytes());
     send_all(sock, body);
     unsafe {
-        STATS.bytes_out = STATS.bytes_out.saturating_add((header.len() + body.len()) as u64);
+        STATS.bytes_out =
+            STATS.bytes_out.saturating_add((header.len() + body.len()) as u64);
     }
-    // Initiate close — the TCP stack will flush the FIN once the peer ACKs.
     tcp::close(sock);
 }
 
-/// TCP send() queues bytes into the send_buf; call it in a loop in case the
-/// implementation caps at MSS.
 fn send_all(sock: tcp::SocketHandle, mut data: &[u8]) {
     while !data.is_empty() {
         let n = tcp::send(sock, data);
         if n == 0 {
-            // Socket state likely not allowing sends — bail.
             break;
         }
         data = &data[n..];
@@ -712,12 +1080,14 @@ fn update_server_node() {
              Port: {}\n\
              Conns in flight: {}\n\
              Requests: {}\n\
+             Writes: {}\n\
              Bytes out: {}\n\
              404s: {}\n\
              Errors: {}",
             srv.port,
             srv.conns.len(),
             s.requests,
+            s.writes,
             s.bytes_out,
             s.not_found,
             s.errors

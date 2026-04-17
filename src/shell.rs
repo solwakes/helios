@@ -443,7 +443,7 @@ fn execute(line: &str) {
         "timer" => cmd_timer(),
         "panic" => cmd_panic(),
         "fault" => cmd_fault(),
-        "clear" => cmd_clear(),
+        "clear" => cmd_clear(arg1),
         "reboot" => cmd_reboot(),
         // Graph commands
         "graph" | "gs" => cmd_graph_stats(),
@@ -486,6 +486,7 @@ fn execute(line: &str) {
         "arp" => cmd_arp(arg1),
         "tcp" => cmd_tcp(arg1, arg2, arg3),
         "httpd" => cmd_httpd(arg1, arg2),
+        "users" => cmd_users(),
         _ => {
             crate::println!("Unknown command: {}", cmd);
             crate::println!("Type 'help' for available commands.");
@@ -547,9 +548,12 @@ fn cmd_help() {
     crate::println!("  tcp listen <port>          - open a TCP listener (blocks until key)");
     crate::println!("  tcp connect <ip> <port>    - TCP active open (sends 'hello\\n')");
     crate::println!("  tcp stats                  - show TCP state & stats");
-    crate::println!("  httpd start [port]         - start HTTP server (graph as JSON)");
+    crate::println!("  httpd start [port]         - start HTTP server (reads+writes)");
     crate::println!("  httpd stop                 - stop HTTP server");
     crate::println!("  httpd stats                - show HTTP server stats");
+    crate::println!("User nodes (POSTed via HTTP):");
+    crate::println!("  users         - list externally-created nodes (id, origin IP, uptime)");
+    crate::println!("  clear users   - delete all externally-created nodes");
 }
 
 fn cmd_info() {
@@ -677,9 +681,61 @@ fn cmd_fault() {
     }
 }
 
-fn cmd_clear() {
-    // ANSI escape: clear screen and move cursor home
-    crate::print!("\x1b[2J\x1b[H");
+fn cmd_clear(arg: &str) {
+    match arg.trim() {
+        "" => {
+            // ANSI escape: clear screen and move cursor home
+            crate::print!("\x1b[2J\x1b[H");
+        }
+        "users" => cmd_clear_users(),
+        other => {
+            crate::println!("Unknown argument to 'clear': {}", other);
+            crate::println!("Usage: clear           (clear screen)");
+            crate::println!("       clear users    (remove all externally-created nodes)");
+        }
+    }
+}
+
+fn cmd_users() {
+    let list = crate::graph::user::all();
+    if list.is_empty() {
+        crate::println!("user nodes: (none)");
+        return;
+    }
+    crate::println!("user nodes:");
+    let g = crate::graph::get();
+    for (id, info) in list.iter() {
+        let (ty, name) = match g.get_node(*id) {
+            Some(n) => (alloc::format!("{}", n.type_tag), alloc::string::String::from(n.name.as_str())),
+            None => (alloc::string::String::from("(gone)"), alloc::string::String::from("(gone)")),
+        };
+        crate::println!(
+            "  #{} {} \"{}\" from {}.{}.{}.{} at uptime={}s",
+            id,
+            ty,
+            name,
+            info.source_ip[0],
+            info.source_ip[1],
+            info.source_ip[2],
+            info.source_ip[3],
+            info.created_uptime_s
+        );
+    }
+}
+
+fn cmd_clear_users() {
+    let list = crate::graph::user::all();
+    let n = list.len();
+    if n == 0 {
+        crate::println!("no user nodes to clear");
+        return;
+    }
+    let g = crate::graph::get_mut();
+    for (id, _) in list.iter() {
+        g.remove_node(*id);
+        crate::graph::user::forget(*id);
+    }
+    crate::println!("cleared {} user node(s)", n);
 }
 
 fn cmd_reboot() {
