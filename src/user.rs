@@ -344,6 +344,25 @@ pub fn bigalloc_program_bytes() -> &'static [u8] {
     BIGALLOC_USER_BIN
 }
 
+// ---------------------------------------------------------------------------
+// Post-M34: `gtree-user` — recursive graph walker (`tree` for the graph).
+//
+// Tests helios-std's Vec + recursion + label decoding in one program.
+// Caps are pre-granted by the shell at spawn time: it BFSes the
+// requested subtree kernel-side and grants a `traverse` edge to every
+// reachable node within `depth`. See `crates/gtree-user/src/main.rs`.
+// ---------------------------------------------------------------------------
+
+static GTREE_USER_BIN: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/user-bins/gtree-user.bin",
+));
+
+/// Raw bytes of the `gtree-user` recursive walker program.
+pub fn gtree_program_bytes() -> &'static [u8] {
+    GTREE_USER_BIN
+}
+
 // The bad-demo blob: loads from an unmapped VA so the MMU (not the
 // syscall layer) catches the capability violation.
 global_asm!(
@@ -2281,6 +2300,8 @@ static mut CAT_CODE_ID: u64 = 0;
 static mut MMAP_CODE_ID: u64 = 0;
 /// M33.5: node id of the `bigalloc` demo (GlobalAlloc via SYS_MAP_NODE).
 static mut BIGALLOC_CODE_ID: u64 = 0;
+/// Post-M34: node id of the `gtree` recursive graph walker.
+static mut GTREE_CODE_ID: u64 = 0;
 
 /// Initialize the demo user-space nodes: a Binary code node for each
 /// demo + a Text node the M29 demo reads + the scratch node the M30
@@ -2372,6 +2393,12 @@ pub fn init() {
     if let Some(n) = g.get_node_mut(bigalloc_id) { n.content = bigalloc_bytes.to_vec(); }
     g.add_edge(1, "child", bigalloc_id);
 
+    // Post-M34: recursive graph walker.
+    let gtree_bytes = gtree_program_bytes();
+    let gtree_id = g.create_node(NodeType::Binary, "gtree-user-code");
+    if let Some(n) = g.get_node_mut(gtree_id) { n.content = gtree_bytes.to_vec(); }
+    g.add_edge(1, "child", gtree_id);
+
     unsafe {
         DEMO_CODE_ID = code_id;
         BADDEMO_CODE_ID = bad_id;
@@ -2386,6 +2413,7 @@ pub fn init() {
         CAT_CODE_ID = cat_id;
         MMAP_CODE_ID = mmap_id;
         BIGALLOC_CODE_ID = bigalloc_id;
+        GTREE_CODE_ID = gtree_id;
     }
     crate::println!(
         "[user] demo nodes ready: demo=#{} ({}B) bad=#{} ({}B) text=#{}",
@@ -2411,6 +2439,10 @@ pub fn init() {
     crate::println!(
         "[user] M33.5 native Rust: bigalloc=#{} ({} B)",
         bigalloc_id, bigalloc_bytes.len(),
+    );
+    crate::println!(
+        "[user] post-M34 native Rust: gtree=#{} ({} B)",
+        gtree_id, gtree_bytes.len(),
     );
 }
 
@@ -2445,3 +2477,6 @@ pub fn mmap_code_id() -> u64 { unsafe { MMAP_CODE_ID } }
 /// Node id of the compiled `bigalloc-user` Rust binary (M33.5).
 #[allow(static_mut_refs)]
 pub fn bigalloc_code_id() -> u64 { unsafe { BIGALLOC_CODE_ID } }
+/// Node id of the compiled `gtree-user` Rust binary (post-M34).
+#[allow(static_mut_refs)]
+pub fn gtree_code_id() -> u64 { unsafe { GTREE_CODE_ID } }

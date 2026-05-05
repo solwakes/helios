@@ -223,7 +223,7 @@ Then **Proposal C** (CDT) as the first "big" milestone after the utility work. B
 
 Secondary candidates — worth doing in the white space between the above:
 
-- **`gtree [depth]`** — recursive graph walker. Tests helios-std's `Vec` + recursion. ~100 LOC.
+- ~~**`gtree [depth]`** — recursive graph walker. Tests helios-std's `Vec` + recursion. ~100 LOC.~~ **Shipped 2026-05-04** as `crates/gtree-user/` (~180 LOC including doc, output ~9.6 KiB). `spawn gtree [id] [depth]` walks `child` edges with tree-style indent + glyphs (`├── ` / `└── ` / `│   `). Cap edges + structural backlinks listed inline as leaf annotations, not recursed. Shell pre-grants `traverse` caps to all reachable nodes via kernel-side BFS at spawn time. Tested on demo graph at depth 1/2/3 from root and from leaf nodes — all clean, 0 EPERM.
 - **`gfollow <src> <label>`** — thin wrapper over `SYS_FOLLOW_EDGE`. Completes the first-pass utility set.
 - **`gwrite <id> <content>`** — exercises `SYS_WRITE_NODE`. Demo program for write caps.
 - **Host-side unit tests for helios-std.** The pure-data modules (`graph::Label::from_kind`, `Errno::from_raw`, edge serialization) can compile for the host target and be `cargo test`-ed without QEMU. Would catch a surprising fraction of regressions.

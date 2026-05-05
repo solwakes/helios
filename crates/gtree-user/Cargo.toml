@@ -1,0 +1,13 @@
+[package]
+name = "gtree-user"
+version = "0.1.0"
+edition = "2021"
+description = "Recursive graph walker — `tree` for the Helios graph"
+build = "build.rs"
+
+[[bin]]
+name = "gtree-user"
+path = "src/main.rs"
+
+[dependencies]
+helios-std = { path = "../helios-std" }

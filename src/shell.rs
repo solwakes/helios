@@ -465,7 +465,7 @@ fn execute(line: &str) {
         "disk" => cmd_disk(),
         // Task commands
         "ps" => cmd_ps(),
-        "spawn" => cmd_spawn(arg1, arg2),
+        "spawn" => cmd_spawn(arg1, arg2, arg3),
         "kill" => cmd_kill(arg1),
         // IPC commands
         "ipc" => cmd_ipc(),
@@ -1297,9 +1297,9 @@ fn cmd_ps() {
     }
 }
 
-fn cmd_spawn(name: &str, arg: &str) {
+fn cmd_spawn(name: &str, arg: &str, arg2: &str) {
     if name.is_empty() {
-        crate::println!("Usage: spawn <name|node_id> [arg]");
+        crate::println!("Usage: spawn <name|node_id> [arg] [arg2]");
         crate::println!("  Kernel demos: counter, fibonacci, busyloop, producer, consumer, pingpong");
         crate::println!("  User space:   spawn <code_node_id>  (drops to U-mode with edge-based caps)");
         crate::println!("                spawn userdemo  (M29: read/forbidden demo)");
@@ -1313,6 +1313,7 @@ fn cmd_spawn(name: &str, arg: &str) {
         crate::println!("                spawn cat <id>  (M32: graph-native read_node)");
         crate::println!("                spawn mmap      (M33: SYS_MAP_NODE dynamic memory)");
         crate::println!("                spawn bigalloc  (M33.5: GlobalAlloc via SYS_MAP_NODE slabs)");
+        crate::println!("                spawn gtree [id] [depth]  (recursive `tree`-style walker)");
         return;
     }
     // Shortcut: "spawn userdemo" launches the boot-time demo code node.
@@ -1524,6 +1525,112 @@ fn cmd_spawn(name: &str, arg: &str) {
         crate::println!("user task returned {}", rc);
         return;
     }
+    // Post-M34: recursive `tree`-style graph walker.
+    //
+    // `spawn gtree [id] [depth]` walks `child` edges from `<id>` (default
+    // root) up to `<depth>` (default 3). The shell pre-grants `traverse`
+    // caps to every reachable node by BFSing the same subtree kernel-
+    // side; the user task then `list_edges` / `read_edge_label` its way
+    // through them. Other edge labels (`parent`, cap edges) are listed
+    // inline in the output but not recursed into.
+    //
+    // Cap-budget note: at depth 3 from root with the demo graph, the
+    // BFS yields ~25 nodes; the per-task `traverse_allowed` Vec absorbs
+    // that comfortably. Depth is hard-capped at 16 below to keep the
+    // worst case bounded.
+    if name == "gtree" || name == "gtree-user" {
+        let code_id = crate::user::gtree_code_id();
+        if code_id == 0 {
+            crate::println!("gtree-user-code not initialized");
+            return;
+        }
+
+        // Resolve target node id. Same convention as ls: empty/0 → root.
+        let target: u64 = if arg.is_empty() {
+            1
+        } else if let Some(n) = parse_usize(arg) {
+            if n == 0 { 1 } else { n as u64 }
+        } else {
+            crate::println!("gtree: bad node id '{}'", arg);
+            return;
+        };
+
+        // Resolve depth. Empty → 3. Cap at 16 (graph isn't deep enough
+        // for that to clip anything practical, and bounding the BFS
+        // is cheap insurance against pathological inputs).
+        let depth: u32 = if arg2.is_empty() {
+            3
+        } else if let Some(n) = parse_usize(arg2) {
+            if n == 0 {
+                crate::println!("gtree: depth must be > 0");
+                return;
+            }
+            if n > 16 {
+                crate::println!("gtree: depth {} too large (max 16)", n);
+                return;
+            }
+            n as u32
+        } else {
+            crate::println!("gtree: bad depth '{}'", arg2);
+            return;
+        };
+
+        // Kernel-side BFS — collect every node reachable from `target`
+        // via `child` edges within `depth` hops. We pre-grant a
+        // `traverse` cap to each so the user task's recursion has the
+        // caps it needs without us having to invent any new
+        // delegation primitive.
+        let traverse_targets: alloc::vec::Vec<u64> = {
+            let g = crate::graph::get();
+            // BTreeSet would be cleaner but we're already on Vec
+            // throughout the kernel and the BFS is tiny.
+            let mut visited: alloc::vec::Vec<u64> = alloc::vec::Vec::new();
+            let mut queue: alloc::vec::Vec<(u64, u32)> = alloc::vec::Vec::new();
+            queue.push((target, 0));
+            visited.push(target);
+            let mut head = 0usize;
+            while head < queue.len() {
+                let (id, d) = queue[head];
+                head += 1;
+                if d >= depth {
+                    continue;
+                }
+                if let Some(node) = g.get_node(id) {
+                    for e in &node.edges {
+                        if e.label == "child" && !visited.contains(&e.target) {
+                            visited.push(e.target);
+                            queue.push((e.target, d + 1));
+                        }
+                    }
+                }
+            }
+            visited
+        };
+
+        let extra_edges: alloc::vec::Vec<(&str, u64)> =
+            traverse_targets.iter().map(|&t| ("traverse", t)).collect();
+
+        crate::println!(
+            "helios> spawning 'gtree' — {} traverse cap{}, root=#{}, depth={} (code #{})",
+            extra_edges.len(),
+            if extra_edges.len() == 1 { "" } else { "s" },
+            target,
+            depth,
+            code_id,
+        );
+
+        let rc = crate::user::run_user_task_with_caps(
+            code_id,
+            &extra_edges,
+            // self_traverse not strictly needed (we don't recurse on
+            // task self-edges), but harmless and consistent with ls.
+            true,
+            target as usize,
+            depth as usize,
+        );
+        crate::println!("user task returned {}", rc);
+        return;
+    }
     // Numeric argument -> treat as a code node id and launch as user task.
     if let Some(id) = parse_usize(name) {
         let code_id = id as u64;
@@ -1549,7 +1656,7 @@ fn cmd_spawn(name: &str, arg: &str) {
         "producer" => crate::task::demo_producer,
         "consumer" => crate::task::demo_consumer,
         _ => {
-            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), ls <id>, cat <id> (M32), mmap (M33), bigalloc (M33.5), or a numeric code node id", name);
+            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), ls <id>, cat <id> (M32), mmap (M33), bigalloc (M33.5), gtree [id] [depth], or a numeric code node id", name);
             return;
         }
     };
