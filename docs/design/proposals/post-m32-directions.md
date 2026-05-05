@@ -227,7 +227,7 @@ Secondary candidates — worth doing in the white space between the above:
 - **`gfollow <src> <label>`** — thin wrapper over `SYS_FOLLOW_EDGE`. Completes the first-pass utility set.
 - **`gwrite <id> <content>`** — exercises `SYS_WRITE_NODE`. Demo program for write caps.
 - **Host-side unit tests for helios-std.** The pure-data modules (`graph::Label::from_kind`, `Errno::from_raw`, edge serialization) can compile for the host target and be `cargo test`-ed without QEMU. Would catch a surprising fraction of regressions.
-- **Kill-orphan-QEMU wrapper script.** Not a milestone, but pain during M31/M32 overnight: parallel `make run` sessions leave zombie qemu-system-riscv64 processes holding the disk lock. A 10-line `scripts/kill-orphans.sh` would save future time.
+- **Kill-orphan-QEMU wrapper script.** ~~Not a milestone, but pain during M31/M32 overnight: parallel `make run` sessions leave zombie qemu-system-riscv64 processes holding the disk lock. A 10-line `scripts/kill-orphans.sh` would save future time.~~ **Shipped 2026-05-04** as `scripts/kill-orphans.sh` (~50 lines with `-9` and `-n` modes; auto-escalates SIGTERM → SIGKILL after 2s).
 
 ## Open Questions for Author
 
