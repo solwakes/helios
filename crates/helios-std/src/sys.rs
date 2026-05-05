@@ -9,7 +9,20 @@
 //! Higher-level typed wrappers live in [`crate::graph`], [`crate::io`],
 //! and [`crate::task`]. Reach for those first; `sys` is the
 //! low-level escape hatch.
+//!
+//! # Host-target compilation
+//!
+//! All `ecall`-emitting bodies are gated behind
+//! `#[cfg(target_arch = "riscv64")]`. On any other target (host
+//! compilation for unit tests, IDE checks, doc builds) the same
+//! function signatures are kept but their bodies become
+//! `unimplemented!()`. This lets `helios-std`'s pure-data modules
+//! (`graph::Label`, `graph::Errno`, edge serialization, etc.) be
+//! exercised by `cargo test` on the developer's host triple. The
+//! build-std + riscv64 path is unaffected — every real Helios user
+//! binary still gets the inline-asm `ecall` bodies.
 
+#[cfg(target_arch = "riscv64")]
 use core::arch::asm;
 
 // ---------------------------------------------------------------------------
@@ -44,6 +57,7 @@ pub const ENOMEM: isize = -4;
 // ---------------------------------------------------------------------------
 
 /// Invoke a syscall with no arguments. Returns the raw `a0` result.
+#[cfg(target_arch = "riscv64")]
 #[inline(always)]
 pub unsafe fn syscall0(nr: usize) -> isize {
     let ret: isize;
@@ -56,7 +70,16 @@ pub unsafe fn syscall0(nr: usize) -> isize {
     ret
 }
 
+/// Host stub for `syscall0` — see module-level docs. The signature is
+/// preserved so callers compile on host; calling at runtime panics.
+#[cfg(not(target_arch = "riscv64"))]
+#[inline(always)]
+pub unsafe fn syscall0(_nr: usize) -> isize {
+    unimplemented!("syscall0 is only available on riscv64 (Helios target)")
+}
+
 /// Invoke a syscall with one argument.
+#[cfg(target_arch = "riscv64")]
 #[inline(always)]
 pub unsafe fn syscall1(nr: usize, a0: usize) -> isize {
     let ret: isize;
@@ -69,7 +92,15 @@ pub unsafe fn syscall1(nr: usize, a0: usize) -> isize {
     ret
 }
 
+/// Host stub for `syscall1`.
+#[cfg(not(target_arch = "riscv64"))]
+#[inline(always)]
+pub unsafe fn syscall1(_nr: usize, _a0: usize) -> isize {
+    unimplemented!("syscall1 is only available on riscv64 (Helios target)")
+}
+
 /// Invoke a syscall with two arguments.
+#[cfg(target_arch = "riscv64")]
 #[inline(always)]
 pub unsafe fn syscall2(nr: usize, a0: usize, a1: usize) -> isize {
     let ret: isize;
@@ -83,7 +114,15 @@ pub unsafe fn syscall2(nr: usize, a0: usize, a1: usize) -> isize {
     ret
 }
 
+/// Host stub for `syscall2`.
+#[cfg(not(target_arch = "riscv64"))]
+#[inline(always)]
+pub unsafe fn syscall2(_nr: usize, _a0: usize, _a1: usize) -> isize {
+    unimplemented!("syscall2 is only available on riscv64 (Helios target)")
+}
+
 /// Invoke a syscall with three arguments.
+#[cfg(target_arch = "riscv64")]
 #[inline(always)]
 pub unsafe fn syscall3(nr: usize, a0: usize, a1: usize, a2: usize) -> isize {
     let ret: isize;
@@ -98,7 +137,15 @@ pub unsafe fn syscall3(nr: usize, a0: usize, a1: usize, a2: usize) -> isize {
     ret
 }
 
+/// Host stub for `syscall3`.
+#[cfg(not(target_arch = "riscv64"))]
+#[inline(always)]
+pub unsafe fn syscall3(_nr: usize, _a0: usize, _a1: usize, _a2: usize) -> isize {
+    unimplemented!("syscall3 is only available on riscv64 (Helios target)")
+}
+
 /// Invoke a syscall with four arguments.
+#[cfg(target_arch = "riscv64")]
 #[inline(always)]
 pub unsafe fn syscall4(nr: usize, a0: usize, a1: usize, a2: usize, a3: usize) -> isize {
     let ret: isize;
@@ -114,7 +161,21 @@ pub unsafe fn syscall4(nr: usize, a0: usize, a1: usize, a2: usize, a3: usize) ->
     ret
 }
 
+/// Host stub for `syscall4`.
+#[cfg(not(target_arch = "riscv64"))]
+#[inline(always)]
+pub unsafe fn syscall4(
+    _nr: usize,
+    _a0: usize,
+    _a1: usize,
+    _a2: usize,
+    _a3: usize,
+) -> isize {
+    unimplemented!("syscall4 is only available on riscv64 (Helios target)")
+}
+
 /// `SYS_EXIT(code)` — does not return.
+#[cfg(target_arch = "riscv64")]
 #[inline(always)]
 pub unsafe fn syscall_exit(code: i32) -> ! {
     asm!(
@@ -123,6 +184,14 @@ pub unsafe fn syscall_exit(code: i32) -> ! {
         in("a0") code as usize,
         options(noreturn),
     );
+}
+
+/// Host stub for `syscall_exit`. Aborts the host-side test process so
+/// the `-> !` signature is honored without inline asm.
+#[cfg(not(target_arch = "riscv64"))]
+#[inline(always)]
+pub unsafe fn syscall_exit(_code: i32) -> ! {
+    unimplemented!("syscall_exit is only available on riscv64 (Helios target)")
 }
 
 /// `SYS_MAP_NODE(size, flags)` — ask the kernel for `size` bytes of
@@ -167,4 +236,44 @@ pub unsafe fn sys_read_edge_label(
         buf as usize,
         buf_len,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Host-side unit tests for syscall numbers + errno constants.
+// ---------------------------------------------------------------------------
+//
+// These pin the ABI to fixed bytes. The kernel side has the matching
+// constants in `src/user.rs`; if either drifts the userspace
+// programs silently start invoking the wrong syscall (or
+// misinterpreting return codes). No QEMU needed to catch that.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pin the 9 syscall numbers in M30/M33/M34 to their kernel ABI
+    /// values. If the kernel renumbers, this test fails before the
+    /// next QEMU run does.
+    #[test]
+    fn syscall_numbers_match_kernel_abi() {
+        assert_eq!(SYS_READ_NODE, 1);
+        assert_eq!(SYS_PRINT, 2);
+        assert_eq!(SYS_EXIT, 3);
+        assert_eq!(SYS_WRITE_NODE, 4);
+        assert_eq!(SYS_LIST_EDGES, 5);
+        assert_eq!(SYS_FOLLOW_EDGE, 6);
+        assert_eq!(SYS_SELF, 7);
+        assert_eq!(SYS_MAP_NODE, 8);
+        assert_eq!(SYS_READ_EDGE_LABEL, 9);
+    }
+
+    /// Errno constants are negative single-digit values; pin them to
+    /// stay in sync with `crate::graph::Errno::from_raw`.
+    #[test]
+    fn errno_constants_match_kernel_abi() {
+        assert_eq!(EPERM, -1);
+        assert_eq!(ENOENT, -2);
+        assert_eq!(EINVAL, -3);
+        assert_eq!(ENOMEM, -4);
+    }
 }

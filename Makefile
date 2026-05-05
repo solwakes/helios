@@ -2,7 +2,7 @@ CARGO := $(HOME)/.cargo/bin/cargo
 KERNEL := target/riscv64gc-unknown-none-elf/release/helios
 DISK := helios.img
 
-.PHONY: build run run-gui clean
+.PHONY: build run run-gui clean test-host
 
 build:
 	$(CARGO) build --release
@@ -40,3 +40,9 @@ run-gui: build $(DISK)
 
 clean:
 	$(CARGO) clean
+
+# Run host-side unit tests for helios-std (Label/Errno encoding,
+# NodeId display, edge wire-format decode, syscall-number constants).
+# Tests compile against the host triple — see scripts/test-host.sh.
+test-host:
+	./scripts/test-host.sh

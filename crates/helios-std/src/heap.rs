@@ -74,21 +74,25 @@ pub const MAX_SLABS: usize = 16;
 // stale reads across a nested call that didn't touch the same
 // visible memory, even when logically it did. Atomics settle the
 // codegen.
-#[link_section = ".data.helios_heap"]
+#[cfg_attr(target_arch = "riscv64", link_section = ".data.helios_heap")]
 static CURRENT_BASE: AtomicUsize = AtomicUsize::new(0);
 
-#[link_section = ".data.helios_heap"]
+#[cfg_attr(target_arch = "riscv64", link_section = ".data.helios_heap")]
 static CURRENT_END: AtomicUsize = AtomicUsize::new(0);
 
-#[link_section = ".data.helios_heap"]
+#[cfg_attr(target_arch = "riscv64", link_section = ".data.helios_heap")]
 static CURRENT_CURSOR: AtomicUsize = AtomicUsize::new(0);
 
-#[link_section = ".data.helios_heap"]
+#[cfg_attr(target_arch = "riscv64", link_section = ".data.helios_heap")]
 static SLAB_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-#[link_section = ".data.helios_heap"]
+#[cfg_attr(target_arch = "riscv64", link_section = ".data.helios_heap")]
 static PRIOR_BYTES: AtomicUsize = AtomicUsize::new(0);
 
+// On host targets the allocator is unregistered (the test harness's
+// std allocator wins) and these helpers are unused — silence the
+// dead-code warnings rather than gate every helper individually.
+#[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
 struct SlabBumpAllocator;
 
 unsafe impl GlobalAlloc for SlabBumpAllocator {
@@ -143,6 +147,7 @@ unsafe impl GlobalAlloc for SlabBumpAllocator {
 /// power of two (Rust's `Layout` guarantees this). Returns `None` on
 /// overflow.
 #[inline]
+#[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
 fn align_up(v: usize, align: usize) -> Option<usize> {
     // Power-of-two alignment: `(v + align - 1) & !(align - 1)`, guarded
     // for overflow.
@@ -155,6 +160,7 @@ fn align_up(v: usize, align: usize) -> Option<usize> {
 ///
 /// Called from inside `alloc`; must not allocate itself.
 #[inline(never)]
+#[cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
 fn install_new_slab(min_size: usize) -> bool {
     let count = SLAB_COUNT.load(Ordering::SeqCst);
     if count >= MAX_SLABS {
@@ -192,6 +198,13 @@ fn install_new_slab(min_size: usize) -> bool {
     true
 }
 
+// Only register the helios slab allocator as the global allocator on
+// the real Helios target. On host (where this crate may be compiled
+// for `cargo test`), the std test harness brings its own allocator;
+// declaring a second `#[global_allocator]` would be a compile error,
+// and the `SYS_MAP_NODE`-backed bump allocator can't service host
+// allocations anyway (the host has no kernel to call).
+#[cfg(target_arch = "riscv64")]
 #[global_allocator]
 static GLOBAL: SlabBumpAllocator = SlabBumpAllocator;
 

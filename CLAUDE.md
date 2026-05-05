@@ -72,6 +72,10 @@ make run-gui
 
 # Clean build artifacts:
 make clean
+
+# Host-side unit tests for helios-std (no QEMU). Runs in <1s and
+# pins the syscall ABI / Label / Errno / edge wire-format.
+make test-host
 ```
 
 **Critical:** `make run` runs the release binary. `cargo build` builds debug. If you forget `--release`, your changes won't take effect. This has bitten at least two milestones.
@@ -201,4 +205,4 @@ Design conversations that happen only in chat get lost. **The repo is source of 
 
 ---
 
-*Last reviewed: 2026-04-17 (post-M33.5 — helios-std's `GlobalAlloc` rerouted through `SYS_MAP_NODE`).*
+*Last reviewed: 2026-05-05 (added `make test-host` for helios-std host-side unit tests; M34, gtree-user, kill-orphans script all noted in milestone status).*

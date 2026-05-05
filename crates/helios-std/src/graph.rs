@@ -214,7 +214,26 @@ pub fn write_node(id: NodeId, buf: &[u8]) -> Result<usize, Errno> {
 const LIST_EDGES_STAGE: usize = 32;
 
 /// Bytes per edge entry on the wire (matches kernel ABI).
-const EDGE_ENTRY_SIZE: usize = 16;
+pub(crate) const EDGE_ENTRY_SIZE: usize = 16;
+
+/// Decode a single 16-byte edge entry from the kernel wire format.
+///
+/// The kernel writes one edge as: `u64 target_id` (little-endian, 8
+/// bytes), `u8 label_kind`, then 7 padding bytes. This matches
+/// `EdgeInfo` in fields but not in in-memory layout, so callers must
+/// stage into a raw byte buffer and decode through this helper.
+///
+/// Made `pub(crate)` rather than private so the host-side unit tests
+/// in this module's `#[cfg(test)] mod tests` can exercise it without
+/// going through the syscall boundary.
+#[inline]
+pub(crate) fn decode_edge_entry(entry: &[u8; EDGE_ENTRY_SIZE]) -> EdgeInfo {
+    let mut id_bytes = [0u8; 8];
+    id_bytes.copy_from_slice(&entry[0..8]);
+    let target = NodeId(u64::from_le_bytes(id_bytes));
+    let label = Label::from_kind(entry[8]);
+    EdgeInfo { target, label }
+}
 
 /// Enumerate up to `out.len()` outgoing edges of `src` into `out`.
 /// Returns the number of entries written (which may be less than the
@@ -252,11 +271,9 @@ pub fn list_edges_into(src: NodeId, out: &mut [EdgeInfo]) -> Result<usize, Errno
     let count = r as usize;
     for i in 0..count {
         let base = i * EDGE_ENTRY_SIZE;
-        let mut id_bytes = [0u8; 8];
-        id_bytes.copy_from_slice(&stage[base..base + 8]);
-        let target = NodeId(u64::from_le_bytes(id_bytes));
-        let label = Label::from_kind(stage[base + 8]);
-        out[i] = EdgeInfo { target, label };
+        let mut entry = [0u8; EDGE_ENTRY_SIZE];
+        entry.copy_from_slice(&stage[base..base + EDGE_ENTRY_SIZE]);
+        out[i] = decode_edge_entry(&entry);
     }
     Ok(count)
 }
@@ -466,4 +483,262 @@ pub fn map_node_slice(size: usize) -> Result<&'static mut [u8], Errno> {
     // (the kernel installed R+W+U leaves), and `total` <= 64 KiB so
     // the arithmetic doesn't overflow on RV64.
     Ok(unsafe { core::slice::from_raw_parts_mut(ptr.as_ptr(), total) })
+}
+
+// ---------------------------------------------------------------------------
+// Host-side unit tests
+// ---------------------------------------------------------------------------
+//
+// These tests exercise the pure-data parts of `helios-std` (Label
+// encoding, Errno decoding, NodeId display, edge wire-format
+// serialization). They do not call any syscall — all syscall paths
+// are stubbed `unimplemented!()` on non-riscv64 hosts (see `sys.rs`
+// module-level docs). Run via `make test-host` or
+// `scripts/test-host.sh`.
+//
+// The point of these tests isn't coverage of the QEMU-tested logic —
+// it's catching ABI-byte-level mistakes (wrong kernel kind constant,
+// wrong endianness, wrong errno code) without a 30-second QEMU
+// round-trip. They run in milliseconds and compound: every future
+// session benefits.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::format;
+    use alloc::string::ToString;
+
+    // ------------------------------------------------------------------
+    // Label round-trip and ABI constants.
+    // ------------------------------------------------------------------
+
+    /// Every byte must round-trip through `from_kind` → `as_kind`.
+    /// This pins the encoding to a bijection in the input space and
+    /// catches accidental "kind 5 also maps to Read" regressions.
+    #[test]
+    fn label_kind_round_trips_for_every_byte() {
+        for kind in 0u8..=255 {
+            let l = Label::from_kind(kind);
+            assert_eq!(
+                l.as_kind(),
+                kind,
+                "kind {} did not round-trip (got Label::{:?} → {})",
+                kind,
+                l,
+                l.as_kind()
+            );
+        }
+    }
+
+    /// Pin the four named cap-kinds to their kernel ABI bytes. If
+    /// these constants ever drift, every user binary's `list_edges`
+    /// output silently misclassifies. Catching it here is cheaper
+    /// than chasing a bad demo run.
+    #[test]
+    fn label_kind_constants_match_kernel_abi() {
+        assert_eq!(Label::from_kind(1), Label::Read);
+        assert_eq!(Label::from_kind(2), Label::Write);
+        assert_eq!(Label::from_kind(3), Label::Exec);
+        assert_eq!(Label::from_kind(4), Label::Traverse);
+
+        assert_eq!(Label::Read.as_kind(), 1);
+        assert_eq!(Label::Write.as_kind(), 2);
+        assert_eq!(Label::Exec.as_kind(), 3);
+        assert_eq!(Label::Traverse.as_kind(), 4);
+    }
+
+    /// Kind 0 is documented as "unknown". Kernel structural edges
+    /// (`child`, `parent`, `self`) come back as kind-byte 0 from
+    /// `SYS_LIST_EDGES` and are surfaced via `SYS_READ_EDGE_LABEL`.
+    #[test]
+    fn label_zero_is_unknown() {
+        assert_eq!(Label::from_kind(0), Label::Unknown(0));
+    }
+
+    /// Bytes 5..=255 are reserved/unknown — they must not collapse
+    /// to the four named variants.
+    #[test]
+    fn label_unknown_byte_preserved() {
+        for kind in 5u8..=255 {
+            match Label::from_kind(kind) {
+                Label::Unknown(b) => assert_eq!(b, kind),
+                other => panic!(
+                    "kind {} unexpectedly decoded to Label::{:?}",
+                    kind, other
+                ),
+            }
+        }
+    }
+
+    /// Canonical strings used by `ls-user` and the kernel's edge
+    /// labels. Drifting these would break human-readable output.
+    #[test]
+    fn label_str_canonical() {
+        assert_eq!(Label::Read.as_str(), "read");
+        assert_eq!(Label::Write.as_str(), "write");
+        assert_eq!(Label::Exec.as_str(), "exec");
+        assert_eq!(Label::Traverse.as_str(), "traverse");
+        assert_eq!(Label::Unknown(0).as_str(), "?");
+        assert_eq!(Label::Unknown(99).as_str(), "?");
+    }
+
+    /// Display impl matches `as_str` for the named kinds.
+    #[test]
+    fn label_display_matches_as_str() {
+        for l in [Label::Read, Label::Write, Label::Exec, Label::Traverse] {
+            assert_eq!(format!("{}", l), l.as_str());
+        }
+        assert_eq!(format!("{}", Label::Unknown(7)), "?");
+    }
+
+    // ------------------------------------------------------------------
+    // Errno decoding.
+    // ------------------------------------------------------------------
+
+    /// Kernel errno bytes -> typed Errno mapping. These are pinned by
+    /// the kernel's syscall convention; if the kernel renumbers, this
+    /// catches it.
+    #[test]
+    fn errno_named_constants() {
+        assert_eq!(Errno::from_raw(-1), Errno::Perm);
+        assert_eq!(Errno::from_raw(-2), Errno::NotFound);
+        assert_eq!(Errno::from_raw(-3), Errno::Invalid);
+        assert_eq!(Errno::from_raw(-4), Errno::NoMem);
+    }
+
+    /// Other negative values fall through to `Other(n)` rather than
+    /// being silently mapped to one of the named variants.
+    #[test]
+    fn errno_unknown_falls_through_to_other() {
+        for &v in &[-5isize, -42, -99, -1000] {
+            match Errno::from_raw(v) {
+                Errno::Other(got) => assert_eq!(got, v),
+                other => panic!("errno {} → unexpected {:?}", v, other),
+            }
+        }
+    }
+
+    /// Display impl produces the human-readable codes user programs
+    /// print on error.
+    #[test]
+    fn errno_display() {
+        assert_eq!(Errno::Perm.to_string(), "EPERM");
+        assert_eq!(Errno::NotFound.to_string(), "ENOENT");
+        assert_eq!(Errno::Invalid.to_string(), "EINVAL");
+        assert_eq!(Errno::NoMem.to_string(), "ENOMEM");
+        assert_eq!(Errno::Other(-77).to_string(), "E(-77)");
+    }
+
+    // ------------------------------------------------------------------
+    // NodeId.
+    // ------------------------------------------------------------------
+
+    /// `Display` is `#N`. `ls-user` and the navigator both rely on
+    /// this format being stable.
+    #[test]
+    fn node_id_display() {
+        assert_eq!(NodeId(0).to_string(), "#0");
+        assert_eq!(NodeId(1).to_string(), "#1");
+        assert_eq!(NodeId(42).to_string(), "#42");
+        assert_eq!(NodeId(u64::MAX).to_string(), format!("#{}", u64::MAX));
+    }
+
+    /// `Debug` is `NodeId(N)`.
+    #[test]
+    fn node_id_debug() {
+        assert_eq!(format!("{:?}", NodeId(7)), "NodeId(7)");
+    }
+
+    /// Equality / ordering / hash: the derive-based impls treat
+    /// NodeId as transparent over its u64. Pin a couple of cases so
+    /// a future #[repr(...)] change is loud.
+    #[test]
+    fn node_id_ordering() {
+        assert!(NodeId(1) < NodeId(2));
+        assert!(NodeId(2) > NodeId(1));
+        assert_eq!(NodeId(5), NodeId(5));
+        assert_ne!(NodeId(5), NodeId(6));
+    }
+
+    // ------------------------------------------------------------------
+    // EdgeInfo defaults.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn edge_info_default_is_zero_id_unknown_zero() {
+        let e = EdgeInfo::default();
+        assert_eq!(e.target, NodeId(0));
+        assert_eq!(e.label, Label::Unknown(0));
+    }
+
+    // ------------------------------------------------------------------
+    // Edge wire-format decode.
+    // ------------------------------------------------------------------
+    //
+    // Kernel ABI: 16 bytes per edge — first 8 bytes are the target
+    // NodeId in little-endian, byte 8 is the label kind, bytes 9..16
+    // are reserved/padding. These tests pin all three: endianness,
+    // padding-tolerance, and label-kind decoding.
+
+    #[test]
+    fn decode_edge_entry_zeroed() {
+        let entry = [0u8; EDGE_ENTRY_SIZE];
+        let e = decode_edge_entry(&entry);
+        assert_eq!(e.target, NodeId(0));
+        assert_eq!(e.label, Label::Unknown(0));
+    }
+
+    #[test]
+    fn decode_edge_entry_low_byte_only() {
+        let mut entry = [0u8; EDGE_ENTRY_SIZE];
+        entry[0] = 0x42; // u64 LE: 0x0000_0000_0000_0042
+        entry[8] = 1; // Label::Read
+        let e = decode_edge_entry(&entry);
+        assert_eq!(e.target, NodeId(0x42));
+        assert_eq!(e.label, Label::Read);
+    }
+
+    #[test]
+    fn decode_edge_entry_full_u64_little_endian() {
+        // 0x0123_4567_89AB_CDEF in little-endian byte order.
+        let entry: [u8; EDGE_ENTRY_SIZE] = [
+            0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, // target
+            4, // Label::Traverse
+            0, 0, 0, 0, 0, 0, 0, // padding (kernel currently zeroes)
+        ];
+        let e = decode_edge_entry(&entry);
+        assert_eq!(e.target, NodeId(0x0123_4567_89AB_CDEF));
+        assert_eq!(e.label, Label::Traverse);
+    }
+
+    /// Decoder must ignore bytes 9..16 — they are reserved padding.
+    /// If a future kernel ever uses them, an explicit ABI bump is
+    /// required, not silent reinterpretation.
+    #[test]
+    fn decode_edge_entry_padding_ignored() {
+        let mut entry = [0u8; EDGE_ENTRY_SIZE];
+        entry[0..8].copy_from_slice(&100u64.to_le_bytes());
+        entry[8] = 2; // Label::Write
+        // Set every padding byte to 0xFF — must not affect the
+        // decoded result.
+        for b in &mut entry[9..16] {
+            *b = 0xFF;
+        }
+        let e = decode_edge_entry(&entry);
+        assert_eq!(e.target, NodeId(100));
+        assert_eq!(e.label, Label::Write);
+    }
+
+    /// Highest-bit set in target id round-trips intact (catches any
+    /// accidental signed coercion in the decode path).
+    #[test]
+    fn decode_edge_entry_high_bit_target() {
+        let mut entry = [0u8; EDGE_ENTRY_SIZE];
+        let id = u64::MAX;
+        entry[0..8].copy_from_slice(&id.to_le_bytes());
+        entry[8] = 3; // Label::Exec
+        let e = decode_edge_entry(&entry);
+        assert_eq!(e.target, NodeId(u64::MAX));
+        assert_eq!(e.label, Label::Exec);
+    }
 }

@@ -29,9 +29,9 @@ use crate::sys;
 // `objcopy -O binary` drops from the image — the resulting pages are
 // then unmapped and writes fault. See the kernel's `build_user_address_space`
 // and the `.bss (NOLOAD)` note in `hello-user/linker.ld`.
-#[link_section = ".data.helios_entry_args"]
+#[cfg_attr(target_arch = "riscv64", link_section = ".data.helios_entry_args")]
 static ENTRY_A0: AtomicUsize = AtomicUsize::new(0);
-#[link_section = ".data.helios_entry_args"]
+#[cfg_attr(target_arch = "riscv64", link_section = ".data.helios_entry_args")]
 static ENTRY_A1: AtomicUsize = AtomicUsize::new(0);
 
 /// Stash the `a0`/`a1` values the kernel placed in registers at task
