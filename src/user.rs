@@ -363,6 +363,27 @@ pub fn gtree_program_bytes() -> &'static [u8] {
     GTREE_USER_BIN
 }
 
+// ---------------------------------------------------------------------------
+// Post-M34: `gfollow-user` — single-step labelled-edge follow.
+//
+// `spawn gfollow <src> <label>` prints the target of the first edge from
+// `<src>` whose label equals `<label>`. The shell stuffs the label
+// bytes into the long-lived `GFOLLOW_LABEL_BUF` Text node and grants
+// the task a `read` cap on it; the user binary reads its own arg label
+// out of that node and calls `follow_edge`. See
+// `crates/gfollow-user/src/main.rs`.
+// ---------------------------------------------------------------------------
+
+static GFOLLOW_USER_BIN: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/user-bins/gfollow-user.bin",
+));
+
+/// Raw bytes of the `gfollow-user` edge-follow program.
+pub fn gfollow_program_bytes() -> &'static [u8] {
+    GFOLLOW_USER_BIN
+}
+
 // The bad-demo blob: loads from an unmapped VA so the MMU (not the
 // syscall layer) catches the capability violation.
 global_asm!(
@@ -2302,6 +2323,12 @@ static mut MMAP_CODE_ID: u64 = 0;
 static mut BIGALLOC_CODE_ID: u64 = 0;
 /// Post-M34: node id of the `gtree` recursive graph walker.
 static mut GTREE_CODE_ID: u64 = 0;
+/// Post-M34: node id of the `gfollow` single-step edge-follow program.
+static mut GFOLLOW_CODE_ID: u64 = 0;
+/// Post-M34: node id of the long-lived Text node the shell uses to
+/// hand a label string to a freshly-spawned `gfollow` task. Re-used
+/// across spawns; safe because `cmd_spawn` is synchronous.
+static mut GFOLLOW_LABEL_BUF_ID: u64 = 0;
 
 /// Initialize the demo user-space nodes: a Binary code node for each
 /// demo + a Text node the M29 demo reads + the scratch node the M30
@@ -2399,6 +2426,22 @@ pub fn init() {
     if let Some(n) = g.get_node_mut(gtree_id) { n.content = gtree_bytes.to_vec(); }
     g.add_edge(1, "child", gtree_id);
 
+    // Post-M34: single-step labelled-edge follow.
+    let gfollow_bytes = gfollow_program_bytes();
+    let gfollow_id = g.create_node(NodeType::Binary, "gfollow-user-code");
+    if let Some(n) = g.get_node_mut(gfollow_id) { n.content = gfollow_bytes.to_vec(); }
+    g.add_edge(1, "child", gfollow_id);
+
+    // Long-lived label-transfer buffer for `spawn gfollow`. Empty at
+    // boot; `cmd_spawn` rewrites the content on each invocation. Sized
+    // with a tiny placeholder so the node exists with non-zero content
+    // capacity. See `cmd_spawn`'s gfollow branch for the rewrite.
+    let gfollow_buf_id = g.create_node(NodeType::Text, "gfollow-label-buf");
+    if let Some(n) = g.get_node_mut(gfollow_buf_id) {
+        n.content = b"".to_vec();
+    }
+    g.add_edge(1, "child", gfollow_buf_id);
+
     unsafe {
         DEMO_CODE_ID = code_id;
         BADDEMO_CODE_ID = bad_id;
@@ -2414,6 +2457,8 @@ pub fn init() {
         MMAP_CODE_ID = mmap_id;
         BIGALLOC_CODE_ID = bigalloc_id;
         GTREE_CODE_ID = gtree_id;
+        GFOLLOW_CODE_ID = gfollow_id;
+        GFOLLOW_LABEL_BUF_ID = gfollow_buf_id;
     }
     crate::println!(
         "[user] demo nodes ready: demo=#{} ({}B) bad=#{} ({}B) text=#{}",
@@ -2441,8 +2486,10 @@ pub fn init() {
         bigalloc_id, bigalloc_bytes.len(),
     );
     crate::println!(
-        "[user] post-M34 native Rust: gtree=#{} ({} B)",
+        "[user] post-M34 native Rust: gtree=#{} ({} B) gfollow=#{} ({} B) gfollow-label-buf=#{}",
         gtree_id, gtree_bytes.len(),
+        gfollow_id, gfollow_bytes.len(),
+        gfollow_buf_id,
     );
 }
 
@@ -2480,3 +2527,10 @@ pub fn bigalloc_code_id() -> u64 { unsafe { BIGALLOC_CODE_ID } }
 /// Node id of the compiled `gtree-user` Rust binary (post-M34).
 #[allow(static_mut_refs)]
 pub fn gtree_code_id() -> u64 { unsafe { GTREE_CODE_ID } }
+/// Node id of the compiled `gfollow-user` Rust binary (post-M34).
+#[allow(static_mut_refs)]
+pub fn gfollow_code_id() -> u64 { unsafe { GFOLLOW_CODE_ID } }
+/// Node id of the long-lived label-transfer Text node used by
+/// `spawn gfollow`. The shell rewrites its content per-spawn.
+#[allow(static_mut_refs)]
+pub fn gfollow_label_buf_id() -> u64 { unsafe { GFOLLOW_LABEL_BUF_ID } }

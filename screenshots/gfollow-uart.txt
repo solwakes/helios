@@ -1,0 +1,307 @@
+
+OpenSBI v1.7
+   ____                    _____ ____ _____
+  / __ \                  / ____|  _ \_   _|
+ | |  | |_ __   ___ _ __ | (___ | |_) || |
+ | |  | | '_ \ / _ \ '_ \ \___ \|  _ < | |
+ | |__| | |_) |  __/ | | |____) | |_) || |_
+  \____/| .__/ \___|_| |_|_____/|____/_____|
+        | |
+        |_|
+
+Platform Name               : riscv-virtio,qemu
+Platform Features           : medeleg
+Platform HART Count         : 1
+Platform IPI Device         : aclint-mswi
+Platform Timer Device       : aclint-mtimer @ 10000000Hz
+Platform Console Device     : uart8250
+Platform HSM Device         : ---
+Platform PMU Device         : ---
+Platform Reboot Device      : syscon-reboot
+Platform Shutdown Device    : syscon-poweroff
+Platform Suspend Device     : ---
+Platform CPPC Device        : ---
+Firmware Base               : 0x80000000
+Firmware Size               : 317 KB
+Firmware RW Offset          : 0x40000
+Firmware RW Size            : 61 KB
+Firmware Heap Offset        : 0x46000
+Firmware Heap Size          : 37 KB (total), 2 KB (reserved), 11 KB (used), 23 KB (free)
+Firmware Scratch Size       : 4096 B (total), 1400 B (used), 2696 B (free)
+Runtime SBI Version         : 3.0
+Standard SBI Extensions     : time,rfnc,ipi,base,hsm,srst,pmu,dbcn,fwft,legacy,dbtr,sse
+Experimental SBI Extensions : none
+
+Domain0 Name                : root
+Domain0 Boot HART           : 0
+Domain0 HARTs               : 0*
+Domain0 Region00            : 0x0000000000100000-0x0000000000100fff M: (I,R,W) S/U: (R,W)
+Domain0 Region01            : 0x0000000010000000-0x0000000010000fff M: (I,R,W) S/U: (R,W)
+Domain0 Region02            : 0x0000000002000000-0x000000000200ffff M: (I,R,W) S/U: ()
+Domain0 Region03            : 0x0000000080040000-0x000000008004ffff M: (R,W) S/U: ()
+Domain0 Region04            : 0x0000000080000000-0x000000008003ffff M: (R,X) S/U: ()
+Domain0 Region05            : 0x000000000c400000-0x000000000c5fffff M: (I,R,W) S/U: (R,W)
+Domain0 Region06            : 0x000000000c000000-0x000000000c3fffff M: (I,R,W) S/U: (R,W)
+Domain0 Region07            : 0x0000000000000000-0xffffffffffffffff M: () S/U: (R,W,X)
+Domain0 Next Address        : 0x0000000080200000
+Domain0 Next Arg1           : 0x0000000087e00000
+Domain0 Next Mode           : S-mode
+Domain0 SysReset            : yes
+Domain0 SysSuspend          : yes
+
+Boot HART ID                : 0
+Boot HART Domain            : root
+Boot HART Priv Version      : v1.12
+Boot HART Base ISA          : rv64imafdch
+Boot HART ISA Extensions    : sstc,zicntr,zihpm,zicboz,zicbom,sdtrig,svadu
+Boot HART PMP Count         : 16
+Boot HART PMP Granularity   : 2 bits
+Boot HART PMP Address Bits  : 54
+Boot HART MHPM Info         : 16 (0x0007fff8)
+Boot HART Debug Triggers    : 2 triggers
+Boot HART MIDELEG           : 0x0000000000001666
+Boot HART MEDELEG           : 0x0000000000f4b509
+
+========================================
+  _   _      _ _
+ | | | | ___| (_) ___  ___
+ | |_| |/ _ \ | |/ _ \/ __|
+ |  _  |  __/ | | (_) \__ \
+ |_| |_|\___|_|_|\___/|___/
+
+  Everything is a memory.
+========================================
+
+[boot] Hart 0 reporting for duty
+[boot] Helios v0.1.0
+[mm] Setting up Sv39 page tables...
+[mm] Identity mapping MMIO: 0x0..0x40000000 (1 GiB gigapage, RW)
+[mm] Identity mapping RAM: 0x80000000..0x88000000 (64 x 2 MiB megapages, RWX)
+[mm] Enabling Sv39 paging (satp = 0x8000000000080724)
+[mm] Paging enabled successfully.
+[graph] Initialized: 9 nodes, 8 edges
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[blk] Found block device @ 0x10008000 (version 2)
+[virtio] Queue 0: max=1024, using=16
+[blk] Device ready, queue size=16
+[blk] VirtIO block device initialized
+[graph] Loaded saved graph from disk: 9 nodes, 7 edges
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[tablet] No VirtIO tablet found
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[input] No VirtIO keyboard found
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=0
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[net] No VirtIO net device found
+[fb] Initialising ramfb framebuffer...
+[ramfb] fw_cfg device verified (QEMU signature OK)
+[ramfb] etc/ramfb not found — is -device ramfb enabled?
+[fb] No ramfb available — UART only
+[trap] Trap handler installed at 0x802732a0
+[trap] Timer interrupts enabled (interval: 100ms), SUM enabled
+
+[boot] Helios kernel initialized successfully.
+
+[ipc] IPC subsystem initialized (channels under node #10)
+[user] /user subgraph ready (node #11)
+[task] Preemptive multitasking initialized (task #0 = shell)
+[user] demo nodes ready: demo=#14 (64B) bad=#15 (32B) text=#16
+[user] M30 demos: who=#17 (208B) explorer=#18 (352B) editor=#19 (512B) naughty=#20 (288B) scratch=#21
+[user] M31 native Rust: hello=#22 (7016 B)
+[user] M32 native Rust: ls=#23 (9160 B) cat=#24 (6648 B)
+[user] M33 native Rust: mmap=#25 (4937 B)
+[user] M33.5 native Rust: bigalloc=#26 (11544 B)
+[user] post-M34 native Rust: gtree=#27 (9656 B) gfollow=#28 (6536 B) gfollow-label-buf=#29
+helios> spawn ls 1
+helios> spawning M32 'ls' — traverse-cap to #1 (code #23)
+[user] task #30 mapped 4 regions, entry=0x40000000, satp=0x8000000000080738
+       exec : va=0x40000000 pa=0x8073b000 node=23
+       exec : va=0x40001000 pa=0x8073c000 node=23
+       exec : va=0x40002000 pa=0x8073d000 node=23
+       stack: va=0x401ff000 pa=0x8073e000 (R/W/U)
+ls #1
+[sys] SYS_LIST_EDGES(src=1, buf_va=0x401ffd80, max=32)
+[sys] SYS_MAP_NODE(size=16384, flags=0) -> node #31, va=0x40100000, 4 page(s)
+  22 edges:
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=0, buf_va=0x401ffd80, len=32)
+    child     -> #2
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=1, buf_va=0x401ffd80, len=32)
+    child     -> #3
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=2, buf_va=0x401ffd80, len=32)
+    child     -> #10
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=3, buf_va=0x401ffd80, len=32)
+    child     -> #11
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=4, buf_va=0x401ffd80, len=32)
+    child     -> #12
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=5, buf_va=0x401ffd80, len=32)
+    child     -> #14
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=6, buf_va=0x401ffd80, len=32)
+    child     -> #15
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=7, buf_va=0x401ffd80, len=32)
+    child     -> #16
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=8, buf_va=0x401ffd80, len=32)
+    child     -> #17
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=9, buf_va=0x401ffd80, len=32)
+    child     -> #18
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=10, buf_va=0x401ffd80, len=32)
+    child     -> #19
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=11, buf_va=0x401ffd80, len=32)
+    child     -> #20
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=12, buf_va=0x401ffd80, len=32)
+    child     -> #21
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=13, buf_va=0x401ffd80, len=32)
+    child     -> #22
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=14, buf_va=0x401ffd80, len=32)
+    child     -> #23
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=15, buf_va=0x401ffd80, len=32)
+    child     -> #24
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=16, buf_va=0x401ffd80, len=32)
+    child     -> #25
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=17, buf_va=0x401ffd80, len=32)
+    child     -> #26
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=18, buf_va=0x401ffd80, len=32)
+    child     -> #27
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=19, buf_va=0x401ffd80, len=32)
+    child     -> #28
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=20, buf_va=0x401ffd80, len=32)
+    child     -> #29
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=21, buf_va=0x401ffd80, len=32)
+    child     -> #30
+  (cap: read=0 write=0 exec=0 traverse=0 other=22)
+[user] task #30 SYS_EXIT(0)
+[user] task #30 exited cleanly with code 0
+user task returned 0
+helios> 
+helios> spawn gfollow 1 child
+helios> spawning gfollow — src=#1 label="child" (code #28, buf #29)
+[user] task #32 mapped 4 regions, entry=0x40000000, satp=0x8000000000080743
+       exec : va=0x40000000 pa=0x80746000 node=28
+       exec : va=0x40001000 pa=0x80747000 node=28
+       read : va=0x40100000 pa=0x80748000 node=29
+       stack: va=0x401ff000 pa=0x80749000 (R/W/U)
+[sys] SYS_MAP_NODE(size=16384, flags=0) -> node #33, va=0x40101000, 4 page(s)
+[sys] SYS_READ_NODE(node=29, buf_va=0x40101000, len=256)
+gfollow #1 "child"
+[sys] SYS_FOLLOW_EDGE(src=1, label="child")
+  -> #2
+[user] task #32 SYS_EXIT(0)
+[user] task #32 exited cleanly with code 0
+user task returned 0
+helios> 
+helios> spawn gfollow 1 parent
+helios> spawning gfollow — src=#1 label="parent" (code #28, buf #29)
+[user] task #34 mapped 4 regions, entry=0x40000000, satp=0x800000000008074e
+       exec : va=0x40000000 pa=0x80751000 node=28
+       exec : va=0x40001000 pa=0x80752000 node=28
+       read : va=0x40100000 pa=0x80753000 node=29
+       stack: va=0x401ff000 pa=0x80754000 (R/W/U)
+[sys] SYS_MAP_NODE(size=16384, flags=0) -> node #35, va=0x40101000, 4 page(s)
+[sys] SYS_READ_NODE(node=29, buf_va=0x40101000, len=256)
+gfollow #1 "parent"
+[sys] SYS_FOLLOW_EDGE(src=1, label="parent")
+  no edge "parent" from #1
+[user] task #34 SYS_EXIT(2)
+[user] task #34 exited cleanly with code 2
+user task returned 2
+helios> 
+helios> spawn gfollow 1 garblefoo
+helios> spawning gfollow — src=#1 label="garblefoo" (code #28, buf #29)
+[user] task #36 mapped 4 regions, entry=0x40000000, satp=0x8000000000080759
+       exec : va=0x40000000 pa=0x8075c000 node=28
+       exec : va=0x40001000 pa=0x8075d000 node=28
+       read : va=0x40100000 pa=0x8075e000 node=29
+       stack: va=0x401ff000 pa=0x8075f000 (R/W/U)
+[sys] SYS_MAP_NODE(size=16384, flags=0) -> node #37, va=0x40101000, 4 page(s)
+[sys] SYS_READ_NODE(node=29, buf_va=0x40101000, len=256)
+gfollow #1 "garblefoo"
+[sys] SYS_FOLLOW_EDGE(src=1, label="garblefoo")
+  no edge "garblefoo" from #1
+[user] task #36 SYS_EXIT(2)
+[user] task #36 exited cleanly with code 2
+user task returned 2
+helios> 
+helios> spawn gfollow 1 child
+helios> spawning gfollow — src=#1 label="child" (code #28, buf #29)
+[user] task #38 mapped 4 regions, entry=0x40000000, satp=0x8000000000080764
+       exec : va=0x40000000 pa=0x80767000 node=28
+       exec : va=0x40001000 pa=0x80768000 node=28
+       read : va=0x40100000 pa=0x80769000 node=29
+       stack: va=0x401ff000 pa=0x8076a000 (R/W/U)
+[sys] SYS_MAP_NODE(size=16384, flags=0) -> node #39, va=0x40101000, 4 page(s)
+[sys] SYS_READ_NODE(node=29, buf_va=0x40101000, len=256)
+gfollow #1 "child"
+[sys] SYS_FOLLOW_EDGE(src=1, label="child")
+  -> #2
+[user] task #38 SYS_EXIT(0)
+[user] task #38 exited cleanly with code 0
+user task returned 0
+helios> 
+helios> spawn gfollow 99999 child
+helios> spawning gfollow — src=#99999 label="child" (code #28, buf #29)
+[user] couldn't add traverse edge to node 99999
+[user] task #40 mapped 4 regions, entry=0x40000000, satp=0x800000000008076f
+       exec : va=0x40000000 pa=0x80772000 node=28
+       exec : va=0x40001000 pa=0x80773000 node=28
+       read : va=0x40100000 pa=0x80774000 node=29
+       stack: va=0x401ff000 pa=0x80775000 (R/W/U)
+[sys] SYS_MAP_NODE(size=16384, flags=0) -> node #41, va=0x40101000, 4 page(s)
+[sys] SYS_READ_NODE(node=29, buf_va=0x40101000, len=256)
+gfollow #99999 "child"
+[user] capability violation: task #40 tried to FOLLOW from node 99999 (no `traverse` edge)
+  EPERM (no traverse cap to #99999)
+[user] task #40 SYS_EXIT(1)
+[user] task #40 exited cleanly with code 1
+user task returned 1
+helios> 
+helios> 

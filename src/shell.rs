@@ -1314,6 +1314,7 @@ fn cmd_spawn(name: &str, arg: &str, arg2: &str) {
         crate::println!("                spawn mmap      (M33: SYS_MAP_NODE dynamic memory)");
         crate::println!("                spawn bigalloc  (M33.5: GlobalAlloc via SYS_MAP_NODE slabs)");
         crate::println!("                spawn gtree [id] [depth]  (recursive `tree`-style walker)");
+        crate::println!("                spawn gfollow <src> <label>  (single-step labelled-edge follow)");
         return;
     }
     // Shortcut: "spawn userdemo" launches the boot-time demo code node.
@@ -1627,6 +1628,89 @@ fn cmd_spawn(name: &str, arg: &str, arg2: &str) {
             true,
             target as usize,
             depth as usize,
+        );
+        crate::println!("user task returned {}", rc);
+        return;
+    }
+    // Post-M34: graph-native edge follow.
+    //
+    // `spawn gfollow <src> <label>` returns the target of the first
+    // outgoing edge from <src> with the given label. Thin wrapper over
+    // SYS_FOLLOW_EDGE — the smallest interesting program that exercises
+    // helios-std's typed `follow_edge` API and prints clean output for
+    // the three common error paths (EPERM / no edge / bad source).
+    //
+    // `<label>` is a single token (Helios edge labels are single words:
+    // `child`, `parent`, `read`, `write`, `exec`, `traverse`, etc.).
+    // Multi-word labels would need a richer arg parser; we don't have
+    // any today, so the third token is taken verbatim.
+    //
+    // Cap-grant: traverse on <src> + read on the kernel's
+    // `gfollow-label-buf` Text node, where we stuff the label bytes
+    // before spawning. Single shared buf node is safe because
+    // `cmd_spawn` is synchronous (run_user_task_with_caps blocks until
+    // task exit), so two gfollow spawns can't race.
+    if name == "gfollow" || name == "gfollow-user" {
+        let code_id = crate::user::gfollow_code_id();
+        let label_buf = crate::user::gfollow_label_buf_id();
+        if code_id == 0 || label_buf == 0 {
+            crate::println!("gfollow-user-code or label-buf not initialized");
+            return;
+        }
+
+        // Source node id. No default — there's no useful "follow from
+        // root by default" since the user has to pick a label anyway.
+        if arg.is_empty() {
+            crate::println!("Usage: spawn gfollow <src> <label>");
+            return;
+        }
+        let src: u64 = match parse_usize(arg) {
+            Some(0) => {
+                crate::println!("gfollow: src must be > 0");
+                return;
+            }
+            Some(n) => n as u64,
+            None => {
+                crate::println!("gfollow: bad node id '{}'", arg);
+                return;
+            }
+        };
+
+        // Label string. Empty arg2 → reject. We don't sanity-check the
+        // label here against known cap labels — arbitrary string labels
+        // are first-class in the graph, and the kernel will return
+        // NotFound for any miss.
+        if arg2.is_empty() {
+            crate::println!("Usage: spawn gfollow <src> <label>");
+            return;
+        }
+        let label = arg2;
+
+        // Stuff the label into the long-lived buf node. Trim/clobber
+        // any previous content from the last gfollow spawn.
+        {
+            let g = crate::graph::get_mut();
+            if let Some(node) = g.get_node_mut(label_buf) {
+                node.content.clear();
+                node.content.extend_from_slice(label.as_bytes());
+            } else {
+                crate::println!("gfollow: label buffer #{} missing from graph", label_buf);
+                return;
+            }
+        }
+
+        crate::println!(
+            "helios> spawning gfollow — src=#{} label=\"{}\" (code #{}, buf #{})",
+            src, label, code_id, label_buf,
+        );
+
+        let rc = crate::user::run_user_task_with_caps(
+            code_id,
+            &[("traverse", src), ("read", label_buf)],
+            // self_traverse off: the user task doesn't introspect itself.
+            false,
+            src as usize,
+            label_buf as usize,
         );
         crate::println!("user task returned {}", rc);
         return;

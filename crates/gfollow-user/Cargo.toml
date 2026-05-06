@@ -1,0 +1,13 @@
+[package]
+name = "gfollow-user"
+version = "0.1.0"
+edition = "2021"
+description = "Follow a labelled edge — graph-native single-step traversal"
+build = "build.rs"
+
+[[bin]]
+name = "gfollow-user"
+path = "src/main.rs"
+
+[dependencies]
+helios-std = { path = "../helios-std" }
