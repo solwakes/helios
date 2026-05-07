@@ -15,6 +15,7 @@
 #   - bigalloc-user : GlobalAlloc-via-SYS_MAP_NODE smoke test (M33.5).
 #   - gtree-user : recursive `tree`-style graph walker (post-M34 utility).
 #   - gfollow-user : single-step labelled-edge follow (post-M34 utility).
+#   - gwrite-user : node-content overwrite (post-M34 utility).
 
 [workspace]
 resolver = "2"
@@ -27,6 +28,7 @@ members = [
     "bigalloc-user",
     "gtree-user",
     "gfollow-user",
+    "gwrite-user",
 ]
 
 [profile.release]

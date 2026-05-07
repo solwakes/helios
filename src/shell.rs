@@ -1315,6 +1315,7 @@ fn cmd_spawn(name: &str, arg: &str, arg2: &str) {
         crate::println!("                spawn bigalloc  (M33.5: GlobalAlloc via SYS_MAP_NODE slabs)");
         crate::println!("                spawn gtree [id] [depth]  (recursive `tree`-style walker)");
         crate::println!("                spawn gfollow <src> <label>  (single-step labelled-edge follow)");
+        crate::println!("                spawn gwrite <id> <content>  (overwrite node content)");
         return;
     }
     // Shortcut: "spawn userdemo" launches the boot-time demo code node.
@@ -1715,6 +1716,89 @@ fn cmd_spawn(name: &str, arg: &str, arg2: &str) {
         crate::println!("user task returned {}", rc);
         return;
     }
+    // Post-M34: graph-native node-content overwrite.
+    //
+    // `spawn gwrite <id> <content>` overwrites <id>'s content with the
+    // given byte string. Thin wrapper over SYS_WRITE_NODE — completes
+    // the first-pass utility set (list / read / recurse / step / write)
+    // and demonstrates a clean error path for write EPERM.
+    //
+    // Cap-grant: write on <id> + read on the kernel's
+    // `gwrite-content-buf` Text node, where we stuff the content bytes
+    // before spawning. Single shared buf node is safe because
+    // `cmd_spawn` is synchronous (run_user_task_with_caps blocks until
+    // task exit), so two gwrite spawns can't race.
+    //
+    // `<content>` is the rest of the line — multi-word content works
+    // because of how `execute()` does `splitn(4, ' ')`. The third
+    // captured token is the entire remainder, including spaces.
+    if name == "gwrite" || name == "gwrite-user" {
+        let code_id = crate::user::gwrite_code_id();
+        let content_buf = crate::user::gwrite_content_buf_id();
+        if code_id == 0 || content_buf == 0 {
+            crate::println!("gwrite-user-code or content-buf not initialized");
+            return;
+        }
+
+        // Target node id. No default — writing to root by default would
+        // be a foot-gun.
+        if arg.is_empty() {
+            crate::println!("Usage: spawn gwrite <id> <content>");
+            return;
+        }
+        let target: u64 = match parse_usize(arg) {
+            Some(0) => {
+                crate::println!("gwrite: id must be > 0");
+                return;
+            }
+            Some(n) => n as u64,
+            None => {
+                crate::println!("gwrite: bad node id '{}'", arg);
+                return;
+            }
+        };
+
+        // Content string. Empty arg2 → reject; no implicit "write empty
+        // content" — that should be an explicit syscall, not a typo.
+        if arg2.is_empty() {
+            crate::println!("Usage: spawn gwrite <id> <content>");
+            return;
+        }
+        let content = arg2;
+
+        // Stuff the content into the long-lived buf node. Replaces any
+        // previous content from the last gwrite spawn.
+        {
+            let g = crate::graph::get_mut();
+            if let Some(node) = g.get_node_mut(content_buf) {
+                node.content.clear();
+                node.content.extend_from_slice(content.as_bytes());
+            } else {
+                crate::println!("gwrite: content buffer #{} missing from graph", content_buf);
+                return;
+            }
+        }
+
+        crate::println!(
+            "helios> spawning gwrite — target=#{} content=({} byte{}) (code #{}, buf #{})",
+            target,
+            content.len(),
+            if content.len() == 1 { "" } else { "s" },
+            code_id,
+            content_buf,
+        );
+
+        let rc = crate::user::run_user_task_with_caps(
+            code_id,
+            &[("write", target), ("read", content_buf)],
+            // self_traverse off: the user task doesn't introspect itself.
+            false,
+            target as usize,
+            content_buf as usize,
+        );
+        crate::println!("user task returned {}", rc);
+        return;
+    }
     // Numeric argument -> treat as a code node id and launch as user task.
     if let Some(id) = parse_usize(name) {
         let code_id = id as u64;
@@ -1740,7 +1824,7 @@ fn cmd_spawn(name: &str, arg: &str, arg2: &str) {
         "producer" => crate::task::demo_producer,
         "consumer" => crate::task::demo_consumer,
         _ => {
-            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), ls <id>, cat <id> (M32), mmap (M33), bigalloc (M33.5), gtree [id] [depth], or a numeric code node id", name);
+            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), ls <id>, cat <id> (M32), mmap (M33), bigalloc (M33.5), gtree [id] [depth], gfollow <src> <label>, gwrite <id> <content>, or a numeric code node id", name);
             return;
         }
     };

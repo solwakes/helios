@@ -1,0 +1,13 @@
+[package]
+name = "gwrite-user"
+version = "0.1.0"
+edition = "2021"
+description = "Overwrite a node's content — graph-native single-step write"
+build = "build.rs"
+
+[[bin]]
+name = "gwrite-user"
+path = "src/main.rs"
+
+[dependencies]
+helios-std = { path = "../helios-std" }

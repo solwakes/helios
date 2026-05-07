@@ -384,6 +384,28 @@ pub fn gfollow_program_bytes() -> &'static [u8] {
     GFOLLOW_USER_BIN
 }
 
+// ---------------------------------------------------------------------------
+// Post-M34: `gwrite-user` — node-content overwrite.
+//
+// `spawn gwrite <id> <content>` overwrites `<id>`'s content with the
+// given byte string. The shell stuffs the content bytes into the
+// long-lived `GWRITE_CONTENT_BUF` Text node and grants the task a
+// `read` cap on it plus a `write` cap on `<id>`; the user binary reads
+// the bytes out of the buffer node and calls `write_node`. Same single-
+// shared-buf pattern as gfollow — safe because `cmd_spawn` is
+// synchronous. See `crates/gwrite-user/src/main.rs`.
+// ---------------------------------------------------------------------------
+
+static GWRITE_USER_BIN: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/user-bins/gwrite-user.bin",
+));
+
+/// Raw bytes of the `gwrite-user` content-overwrite program.
+pub fn gwrite_program_bytes() -> &'static [u8] {
+    GWRITE_USER_BIN
+}
+
 // The bad-demo blob: loads from an unmapped VA so the MMU (not the
 // syscall layer) catches the capability violation.
 global_asm!(
@@ -2329,6 +2351,12 @@ static mut GFOLLOW_CODE_ID: u64 = 0;
 /// hand a label string to a freshly-spawned `gfollow` task. Re-used
 /// across spawns; safe because `cmd_spawn` is synchronous.
 static mut GFOLLOW_LABEL_BUF_ID: u64 = 0;
+/// Post-M34: node id of the `gwrite` content-overwrite program.
+static mut GWRITE_CODE_ID: u64 = 0;
+/// Post-M34: node id of the long-lived Text node the shell uses to
+/// hand a content byte string to a freshly-spawned `gwrite` task.
+/// Re-used across spawns; safe because `cmd_spawn` is synchronous.
+static mut GWRITE_CONTENT_BUF_ID: u64 = 0;
 
 /// Initialize the demo user-space nodes: a Binary code node for each
 /// demo + a Text node the M29 demo reads + the scratch node the M30
@@ -2442,6 +2470,22 @@ pub fn init() {
     }
     g.add_edge(1, "child", gfollow_buf_id);
 
+    // Post-M34: node-content overwrite.
+    let gwrite_bytes = gwrite_program_bytes();
+    let gwrite_id = g.create_node(NodeType::Binary, "gwrite-user-code");
+    if let Some(n) = g.get_node_mut(gwrite_id) { n.content = gwrite_bytes.to_vec(); }
+    g.add_edge(1, "child", gwrite_id);
+
+    // Long-lived content-transfer buffer for `spawn gwrite`. Empty at
+    // boot; `cmd_spawn` rewrites the content on each invocation. The
+    // user binary's read buffer is sized 4 KiB; the shell-side rewrite
+    // truncates if the input exceeds it.
+    let gwrite_buf_id = g.create_node(NodeType::Text, "gwrite-content-buf");
+    if let Some(n) = g.get_node_mut(gwrite_buf_id) {
+        n.content = b"".to_vec();
+    }
+    g.add_edge(1, "child", gwrite_buf_id);
+
     unsafe {
         DEMO_CODE_ID = code_id;
         BADDEMO_CODE_ID = bad_id;
@@ -2459,6 +2503,8 @@ pub fn init() {
         GTREE_CODE_ID = gtree_id;
         GFOLLOW_CODE_ID = gfollow_id;
         GFOLLOW_LABEL_BUF_ID = gfollow_buf_id;
+        GWRITE_CODE_ID = gwrite_id;
+        GWRITE_CONTENT_BUF_ID = gwrite_buf_id;
     }
     crate::println!(
         "[user] demo nodes ready: demo=#{} ({}B) bad=#{} ({}B) text=#{}",
@@ -2490,6 +2536,11 @@ pub fn init() {
         gtree_id, gtree_bytes.len(),
         gfollow_id, gfollow_bytes.len(),
         gfollow_buf_id,
+    );
+    crate::println!(
+        "[user] post-M34 native Rust: gwrite=#{} ({} B) gwrite-content-buf=#{}",
+        gwrite_id, gwrite_bytes.len(),
+        gwrite_buf_id,
     );
 }
 
@@ -2534,3 +2585,10 @@ pub fn gfollow_code_id() -> u64 { unsafe { GFOLLOW_CODE_ID } }
 /// `spawn gfollow`. The shell rewrites its content per-spawn.
 #[allow(static_mut_refs)]
 pub fn gfollow_label_buf_id() -> u64 { unsafe { GFOLLOW_LABEL_BUF_ID } }
+/// Node id of the compiled `gwrite-user` Rust binary (post-M34).
+#[allow(static_mut_refs)]
+pub fn gwrite_code_id() -> u64 { unsafe { GWRITE_CODE_ID } }
+/// Node id of the long-lived content-transfer Text node used by
+/// `spawn gwrite`. The shell rewrites its content per-spawn.
+#[allow(static_mut_refs)]
+pub fn gwrite_content_buf_id() -> u64 { unsafe { GWRITE_CONTENT_BUF_ID } }
