@@ -125,7 +125,7 @@ pub fn list_channels() -> Vec<(u64, String, usize, String)> {
     let mut channels = Vec::new();
 
     if let Some(dir_node) = g.get_node(ipc_dir) {
-        for edge in &dir_node.edges {
+        for edge in dir_node.iter_live() {
             if edge.label == "child" {
                 if let Some(node) = g.get_node(edge.target) {
                     if node.type_tag == NodeType::Channel {

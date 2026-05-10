@@ -117,8 +117,11 @@ pub fn serialize(graph: &Graph) -> Vec<u8> {
         push_u32(&mut buf, node.content.len() as u32);
         buf.extend_from_slice(&node.content);
 
-        push_u16(&mut buf, node.edges.len() as u16);
-        for edge in &node.edges {
+        // Persist only live edges. Tombstones are intra-boot bookkeeping
+        // and don't need to survive a save/load cycle. EdgeId stability
+        // is intra-session anyway: a fresh load is a fresh world.
+        push_u16(&mut buf, node.live_edge_count() as u16);
+        for edge in node.iter_live() {
             let label_bytes = edge.label.as_bytes();
             push_u16(&mut buf, label_bytes.len() as u16);
             buf.extend_from_slice(label_bytes);
@@ -172,7 +175,9 @@ pub fn deserialize(data: &[u8]) -> Option<Graph> {
             let label_bytes = read_bytes(data, &mut off, label_len)?;
             let label = String::from(core::str::from_utf8(label_bytes).ok()?);
             let target = read_u64(data, &mut off)?;
-            edges.push(Edge { label, target });
+            // Loaded edges always start fresh: live, no parent. Tombstone
+            // state and CDT lineage are not persisted (see serialize).
+            edges.push(Edge { label, target, live: true, derived_from: None });
         }
 
         let node = Node {

@@ -175,8 +175,8 @@ fn matches_filter(node: &Node, filter: &Filter<'_>) -> bool {
                 Err(_) => false,
             }
         }
-        Filter::EdgesGt(n) => node.edges.len() > *n,
-        Filter::EdgesEq(n) => node.edges.len() == *n,
+        Filter::EdgesGt(n) => node.live_edge_count() > *n,
+        Filter::EdgesEq(n) => node.live_edge_count() == *n,
     }
 }
 
@@ -282,7 +282,7 @@ pub fn execute(input: &str, graph: &Graph) {
                 }
             };
             let mut count = 0usize;
-            for edge in &node.edges {
+            for edge in node.iter_live() {
                 if let Some(lf) = label_filter {
                     if edge.label.as_str() != lf {
                         continue;
@@ -310,7 +310,7 @@ pub fn execute(input: &str, graph: &Graph) {
             }
             let mut count = 0usize;
             for node in graph.nodes.values() {
-                for edge in &node.edges {
+                for edge in node.iter_live() {
                     if edge.target == target_id {
                         crate::println!("  #{} {} --{}--> #{}", node.id, node.name, edge.label, target_id);
                         count += 1;
@@ -368,9 +368,9 @@ fn bfs_descendants<'a>(graph: &'a Graph, start: u64) -> Vec<&'a Node> {
     let mut queue: Vec<u64> = Vec::new();
     let mut result: Vec<&'a Node> = Vec::new();
 
-    // Seed with direct children
+    // Seed with direct children (live edges only).
     if let Some(node) = graph.get_node(start) {
-        for edge in &node.edges {
+        for edge in node.iter_live() {
             if !visited.contains(&edge.target) {
                 visited.push(edge.target);
                 queue.push(edge.target);
@@ -385,7 +385,7 @@ fn bfs_descendants<'a>(graph: &'a Graph, start: u64) -> Vec<&'a Node> {
 
         if let Some(node) = graph.get_node(id) {
             result.push(node);
-            for edge in &node.edges {
+            for edge in node.iter_live() {
                 if !visited.contains(&edge.target) && edge.target != start {
                     visited.push(edge.target);
                     queue.push(edge.target);
@@ -418,7 +418,7 @@ fn bfs_path(graph: &Graph, from: u64, to: u64) -> Option<Vec<(u64, String)>> {
         head += 1;
 
         if let Some(node) = graph.get_node(current_id) {
-            for edge in &node.edges {
+            for edge in node.iter_live() {
                 if !visited.contains(&edge.target) {
                     visited.push(edge.target);
                     queue.push((edge.target, Some(head - 1), edge.label.clone()));

@@ -882,7 +882,7 @@ fn nodes_json() -> String {
                 n.u64_field("id", node.id);
                 n.str_field("type", &node.type_tag.to_string());
                 n.str_field("name", &node.name);
-                n.u64_field("edges", node.edges.len() as u64);
+                n.u64_field("edges", node.live_edge_count() as u64);
                 n.u64_field("content_bytes", node.content.len() as u64);
                 n.bool_field("user", crate::graph::user::is_user_node(node.id));
                 n.finish();
@@ -919,7 +919,7 @@ fn node_json(id: u64) -> Option<String> {
 
     obj.raw_field("edges", |o| {
         let mut a = json::ArrayBuilder::new(o);
-        for edge in node.edges.iter() {
+        for edge in node.iter_live() {
             a.raw_item(|o2| {
                 let mut e = json::ObjectBuilder::new(o2);
                 e.str_field("label", &edge.label);
@@ -978,10 +978,10 @@ fn tree_node(out: &mut String, id: u64, depth: usize, visited: &mut Vec<u64>, em
         obj.u64_field("id", node.id);
         obj.str_field("type", &node.type_tag.to_string());
         obj.str_field("name", &node.name);
-        obj.u64_field("edges", node.edges.len() as u64);
+        obj.u64_field("edges", node.live_edge_count() as u64);
         obj.raw_field("children", |o| {
             let mut a = json::ArrayBuilder::new(o);
-            for edge in node.edges.iter() {
+            for edge in node.iter_live() {
                 if edge.label != "child" {
                     continue;
                 }

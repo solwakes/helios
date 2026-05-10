@@ -814,11 +814,11 @@ fn cmd_node(id_str: &str) {
             Err(_) => crate::println!("  Content: ({} bytes, binary)", node.content.len()),
         }
     }
-    if node.edges.is_empty() {
+    if node.live_edge_count() == 0 {
         crate::println!("  Edges: (none)");
     } else {
         crate::println!("  Edges:");
-        for edge in &node.edges {
+        for edge in node.iter_live() {
             let target_name = g
                 .get_node(edge.target)
                 .map(|n| n.name.as_str())
@@ -958,10 +958,10 @@ fn cmd_walk(id_str: &str) {
         }
     };
     crate::println!("Node #{} \"{}\" ({})", node.id, node.name, node.type_tag);
-    if node.edges.is_empty() {
+    if node.live_edge_count() == 0 {
         crate::println!("  (no edges)");
     } else {
-        for edge in &node.edges {
+        for edge in node.iter_live() {
             match g.get_node(edge.target) {
                 Some(target) => {
                     crate::println!(

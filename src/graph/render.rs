@@ -122,7 +122,7 @@ fn collect_tree_inner(graph: &Graph, root_id: u64, visited: &mut Vec<u64>, label
         return Some(TreeNode { node_id: root_id, children, edge_labels });
     }
 
-    for edge in &node.edges {
+    for edge in node.iter_live() {
         if edge.label.as_str() == "child" {
             if let Some(child) = collect_tree_inner(graph, edge.target, visited, labels, collapsed) {
                 // Store the label start index (we skip storing "child" labels to
@@ -134,7 +134,7 @@ fn collect_tree_inner(graph: &Graph, root_id: u64, visited: &mut Vec<u64>, label
     }
 
     // Non-child edges (store labels for later display)
-    for edge in &node.edges {
+    for edge in node.iter_live() {
         if edge.label.as_str() != "child" && !visited.contains(&edge.target) {
             if let Some(child) = collect_tree_inner(graph, edge.target, visited, labels, collapsed) {
                 let idx = labels.len();
@@ -633,16 +633,17 @@ fn draw_detail_panel(fb: &Framebuffer, graph: &Graph, node_id: u64) {
 
     // Edges
     if cy + DETAIL_LINE_H > max_y { return; }
-    let edge_hdr = format!("Edges ({})", node.edges.len());
+    let live_count = node.live_edge_count();
+    let edge_hdr = format!("Edges ({})", live_count);
     draw_string(fb, &edge_hdr, cx, cy, SCALE_S, DETAIL_LABEL_C);
     cy += DETAIL_LINE_H;
 
-    if node.edges.is_empty() {
+    if live_count == 0 {
         if cy + DETAIL_LINE_H <= max_y {
             draw_string(fb, "(none)", cx, cy, SCALE_S, DETAIL_VALUE_C);
         }
     } else {
-        for edge in &node.edges {
+        for edge in node.iter_live() {
             if cy + DETAIL_LINE_H > max_y { break; }
             let target_name = graph.get_node(edge.target)
                 .map(|n| n.name.as_str())

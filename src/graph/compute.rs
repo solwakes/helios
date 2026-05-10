@@ -95,7 +95,7 @@ fn evaluate_inner(formula: &str, graph: &Graph, depth: usize) -> String {
         if let Some(arg) = extract_parens(formula) {
             if let Some(id) = parse_id(arg) {
                 if let Some(node) = graph.get_node(id) {
-                    return format!("{}", node.edges.len());
+                    return format!("{}", node.live_edge_count());
                 }
                 return String::from("(node not found)");
             }
@@ -109,7 +109,7 @@ fn evaluate_inner(formula: &str, graph: &Graph, depth: usize) -> String {
                 if let Some(node) = graph.get_node(id) {
                     let mut names = String::new();
                     let mut first = true;
-                    for edge in &node.edges {
+                    for edge in node.iter_live() {
                         if edge.label.as_str() == "child" {
                             if let Some(child) = graph.get_node(edge.target) {
                                 if !first {

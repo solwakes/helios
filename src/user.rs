@@ -1133,7 +1133,8 @@ fn build_user_address_space(task_node_id: u64) -> Result<UserAddressSpace, &'sta
     let mut exec_targets: Vec<u64> = Vec::new();
     let mut read_targets: Vec<u64> = Vec::new();
     let mut write_targets: Vec<u64> = Vec::new();
-    for edge in &task.edges {
+    // Skip tombstoned edges — revoked caps must not produce mappings.
+    for edge in task.iter_live() {
         match edge.label.as_str() {
             "exec" => exec_targets.push(edge.target),
             "read" => read_targets.push(edge.target),
@@ -1380,7 +1381,9 @@ pub fn run_user_task_from_code_node(
         let mut read = Vec::new();
         let mut write = Vec::new();
         let mut traverse = Vec::new();
-        for e in &task.edges {
+        // Skip tombstoned edges — revoked caps must never make it into
+        // the active task's cap caches.
+        for e in task.iter_live() {
             match e.label.as_str() {
                 "exec" => exec.push(e.target),
                 "read" => read.push(e.target),
@@ -1572,7 +1575,9 @@ fn run_user_task_inner(task_node_id: u64, arg0: usize, arg1: usize) -> i64 {
         let mut read = Vec::new();
         let mut write = Vec::new();
         let mut traverse = Vec::new();
-        for e in &task.edges {
+        // Skip tombstoned edges — revoked caps must never make it into
+        // the active task's cap caches.
+        for e in task.iter_live() {
             match e.label.as_str() {
                 "exec" => exec.push(e.target),
                 "read" => read.push(e.target),
@@ -1987,8 +1992,11 @@ fn sys_list_edges(src: u64, buf_va: usize, max_entries: usize) -> i64 {
             Some(n) => n,
             None => return ENOENT,
         };
-        node.edges
-            .iter()
+        // Skip tombstoned edges. The ABI promise is "edges in
+        // insertion order, dense"; tombstones (revoked / removed)
+        // must not be visible to user mode, and `edge_index` in
+        // `SYS_READ_EDGE_LABEL` indexes into this same dense view.
+        node.iter_live()
             .take(max_entries)
             .map(|e| (e.target, label_to_kind(&e.label)))
             .collect()
@@ -2037,7 +2045,9 @@ fn sys_list_edges(src: u64, buf_va: usize, max_entries: usize) -> i64 {
 //   - no `traverse` edge                   → -EPERM
 //   - user buf fails bounds check          → -EINVAL
 //   - src node doesn't exist               → -ENOENT
-//   - edge_index >= node.edges.len()       → -ENOENT
+//   - edge_index >= live edge count        → -ENOENT
+//     (tombstoned slots are invisible — index addresses the dense
+//     live-only view returned by SYS_LIST_EDGES)
 //   - buf_len < label.len()                → -EINVAL
 //     (caller can retry with a bigger buffer)
 // ---------------------------------------------------------------------------
@@ -2074,7 +2084,10 @@ fn sys_read_edge_label(
             Some(n) => n,
             None => return ENOENT,
         };
-        let edge = match node.edges.get(edge_index) {
+        // Index into the *dense, live-only* view, matching SYS_LIST_EDGES.
+        // A tombstoned slot is invisible: it neither consumes an index
+        // nor is reachable by index here.
+        let edge = match node.iter_live().nth(edge_index) {
             Some(e) => e,
             None => return ENOENT,
         };
@@ -2312,7 +2325,9 @@ fn sys_follow_edge(src: u64, label_va: usize, label_len: usize) -> i64 {
         Some(n) => n,
         None => return ENOENT,
     };
-    for e in &node.edges {
+    // Skip tombstoned edges. Following a revoked label must return
+    // ENOENT just as if the edge had never existed.
+    for e in node.iter_live() {
         if e.label == label {
             return e.target as i64;
         }

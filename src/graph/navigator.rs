@@ -58,7 +58,7 @@ impl NavigatorState {
                 // Check if this node has children
                 let graph = crate::graph::get();
                 if let Some(node) = graph.get_node(id) {
-                    let has_children = node.edges.iter().any(|e| {
+                    let has_children = node.iter_live().any(|e| {
                         e.label.as_str() == "child" || graph.get_node(e.target).is_some()
                     });
                     if has_children {
@@ -172,13 +172,14 @@ impl NavigatorState {
             return;
         }
 
-        // Recurse into children (same order as render: child edges first, then others)
-        for edge in &node.edges {
+        // Recurse into children (same order as render: child edges first, then others).
+        // Tombstoned edges are skipped — they don't appear in the navigator.
+        for edge in node.iter_live() {
             if edge.label.as_str() == "child" {
                 self.collect_flat(graph, edge.target, node_id, depth + 1, result, visited);
             }
         }
-        for edge in &node.edges {
+        for edge in node.iter_live() {
             if edge.label.as_str() != "child" {
                 self.collect_flat(graph, edge.target, node_id, depth + 1, result, visited);
             }
