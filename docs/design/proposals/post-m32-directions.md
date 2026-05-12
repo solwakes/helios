@@ -1,6 +1,6 @@
 # Post-M32 Directions
 
-*Status: Partially shipped. Written 2026-04-17 after M31 + M32 shipped overnight. Proposal A was implemented as M33 on 2026-04-17, then completed by M33.5 (the GlobalAlloc rerouting follow-on — see the "Shipped in M33.5" note below); Proposal B (sub-option B.2) shipped as M34 the same day. Proposal A is now fully closed. Proposal C is still on the table.*
+*Status: All three proposals shipped. Written 2026-04-17 after M31 + M32 shipped overnight. Proposal A was implemented as M33 on 2026-04-17, then completed by M33.5 (the GlobalAlloc rerouting follow-on — see the "Shipped in M33.5" note below); Proposal B (sub-option B.2) shipped as M34 the same day; Proposal C (CDT + delegation) shipped across three phases as M35 on 2026-05-10/11/12 (commits `834d23c`, `5591534`, `c808003`). The full M35 implementation lives in `docs/design/capability-edges.md` under "Delegation and Revocation" and "M35 Implementation Notes". This proposal doc is now historical — all decisions it raised have been resolved.*
 
 ## Context
 
@@ -167,9 +167,73 @@ SYS_READ_EDGE_LABEL (9)
 
 **Risks:** trivial. Pure additive syscall with an obvious cap check (`traverse` on src).
 
-### Proposal C: CDT + delegation (M33 in the capability-edges.md map)
+### Proposal C: CDT + delegation (shipped as M35)
 
-**Goal:** Task A can grant one of its edges to task B, revoke it later, and revocation cascades correctly.
+> **Shipped in M35** (originally numbered M33 in the capability-edges.md
+> map, then renumbered after M33 went to `SYS_MAP_NODE` and M34 to
+> `SYS_READ_EDGE_LABEL`). Landed across three phases on 2026-05-10,
+> 2026-05-11, and 2026-05-12:
+>
+> - **Phase 1** (commit `834d23c`): graph-layer primitives —
+>   `Edge { live, derived_from }`, `EdgeId(src_node_id, vec_position)`
+>   newtype, `Graph::tombstone_edge`, `find_descendants`,
+>   `cascade_tombstone`. `Node::iter_live` helper. Append-only +
+>   tombstones won over swap-remove (per the proposal's
+>   recommendation — simplicity-of-correctness matters most here).
+>   ~14 iteration sites updated to skip tombstones.
+> - **Phase 2** (commit `5591534`): syscalls — `SYS_DELEGATE_EDGE = 10`,
+>   `SYS_REVOKE_EDGE = 11`, fifth cap label `grant` (per-target,
+>   MMU-inert, `EDGE_KIND_GRANT = 5`). `ActiveUserTask` gains
+>   `grant_allowed: Vec<u64>` and `mappings: Vec<Mapping>` snapshot
+>   for per-revoke PT unmap. `rebuild_active_cap_caches` + single
+>   `sfence.vma` at end of revoke. Task-exit cleanup cascade-
+>   tombstones the dying task's outgoing edges — caps don't outlive
+>   their principal.
+> - **Phase 3** (commit `c808003`): litmus binaries — `cdtsmoke-alpha-user`
+>   (delegate-then-revoke within one lifetime, prints PASS/FAIL) and
+>   `cdtsmoke-beta-user` (delegate-then-exit, cascade-on-exit verified
+>   *post-hoc by α's baseline read of B*). helios-std gained
+>   `SYS_DELEGATE_EDGE` / `SYS_REVOKE_EDGE` constants, raw syscall
+>   wrappers, and typed `delegate_edge` / `revoke_edge` in
+>   `crate::graph`; `Label::Grant` added to the enum.
+>
+> Decisions in the original proposal that held:
+> - Append-only + tombstones for stable edge identity (recommended).
+> - Per-target `grant` cap (recommended).
+> - Killing A implicitly revokes A's outgoing edges (recommended YES).
+> - Edge id encoding as separate args, not packed (recommended).
+>
+> Decisions resolved during impl that the proposal flagged as open:
+> - Concurrency / kernel-internal-mutex: single-hart cooperative
+>   scheduler means cross-task cascade-during-run is structurally
+>   impossible; deferred to "post-SMP" (M36+). One `sfence.vma zero,
+>   zero` at end of revoke; ASIDs unused.
+> - Page-table mutation cost: bounded by the active task's
+>   `mappings: Vec<Mapping>` (drained per affected target). Single
+>   `sfence.vma` per revoke. No TLB shootdown story needed yet —
+>   single-CPU guest.
+> - Demo shape: scoped to two binaries instead of three (alpha covers
+>   delegate+revoke, beta covers delegate+exit). Test-γ shape per
+>   `knowledge/notes/cdt-grant-policy.md` — α's baseline verifies β's
+>   invariant, both binaries together stronger than either alone.
+>
+> Decisions deferred / explicitly out of M35:
+> - Per-allocation memory free / `SYS_UNMAP_NODE` (still task-exit-only).
+> - map_node delegation / shared-heap (the grant-policy note's option (b)
+>   — separable post-M35 policy decision; one-line change in
+>   `sys_map_node` once committed).
+> - Host-side unit tests on the kernel's Graph CDT path (kernel is
+>   `no_std`; phase 3 binaries cover end-to-end via QEMU).
+> - `SYS_LIST_EDGES_DETAIL` returning EdgeIds (callers know
+>   `(target, label)` and the kernel resolves cheaply).
+>
+> Full implementation notes live in
+> `docs/design/capability-edges.md` § "M35 Implementation Notes".
+> Pre-write state lives in `knowledge/notes/cdt-state-2026-05-07.md`
+> with three forward-pointing addenda (phase-1 5-10, phase-2 5-11,
+> grant-policy 5-11). Proposal C is fully closed.
+
+**Goal (historical):** Task A can grant one of its edges to task B, revoke it later, and revocation cascades correctly.
 
 **Data model:** each edge gains an optional `derived_from` field pointing at the parent edge (the edge A copied from). Revoking edge E:
 
@@ -213,13 +277,27 @@ This keeps the thesis pure: authority to redistribute authority is itself an edg
 - Page-table mutation cost. Revoking a cap requires walking the descendant tasks' page tables and invalidating entries + TLB shootdown. On a single-CPU guest this is a `sfence.vma` per task. On SMP guests (future), this is the first non-trivial TLB shootdown in Helios.
 - Testing. Every corner of delegation/revocation wants a targeted test. The existing "run it in QEMU and look" isn't enough.
 
-## Recommendation
+## Recommendation (historical)
 
-**Proposal A (`SYS_MAP_NODE`) shipped as M33.** It unblocks both B (larger edge-list buffers become cheap) and C (dynamic edge creation needs dynamic pages).
+**Proposal A (`SYS_MAP_NODE`) shipped as M33** (then completed by M33.5
+— `GlobalAlloc` rerouting). It unblocked both B (larger edge-list
+buffers became cheap) and C (dynamic edge creation needed dynamic
+pages).
 
-Next: **Proposal B** (label strings in `ls`) — it's cheap to build on top of `map_node`.
+**Proposal B (`SYS_READ_EDGE_LABEL`, sub-option B.2) shipped as M34** —
+cheap to build on top of `map_node` as predicted.
 
-Then **Proposal C** (CDT) as the first "big" milestone after the utility work. By then helios-std is mature enough that demo programs for delegation/revocation are straightforward to write.
+**Proposal C (CDT + delegation) shipped as M35**, three phases on
+2026-05-10/11/12. The recommendation's framing — "the first 'big'
+milestone after the utility work" — held: M35 was the first place
+where a bug means a real capability leak, and the four-layer
+state-note pattern (pre-write 5-7 + phase-1 addendum 5-10 + phase-2
+addendum 5-11 + grant-policy pre-write 5-11) was the discipline
+that paid the careful-design tax up front so the typing was
+mechanical.
+
+The original recommended ordering (A → B → C) is exactly the
+ordering that shipped.
 
 Secondary candidates — worth doing in the white space between the above:
 
@@ -229,20 +307,25 @@ Secondary candidates — worth doing in the white space between the above:
 - ~~**Host-side unit tests for helios-std.** The pure-data modules (`graph::Label::from_kind`, `Errno::from_raw`, edge serialization) can compile for the host target and be `cargo test`-ed without QEMU. Would catch a surprising fraction of regressions.~~ **Shipped 2026-05-05.** 20 tests across `graph::tests` and `sys::tests`, run via `make test-host` (wraps `scripts/test-host.sh`). Covers `Label` round-trip + ABI byte constants, `Errno` decoding incl. fallthrough to `Other(_)`, `NodeId` Display/Debug/ordering, `EdgeInfo::default`, the 16-byte edge wire-format (extracted as `pub(crate) fn decode_edge_entry`), all 9 syscall numbers, and all 4 errno constants. Inline-asm `ecall` bodies in `sys.rs` are now `#[cfg(target_arch = "riscv64")]`-gated with `unimplemented!()` host stubs; `#[global_allocator]` and `#[link_section]` attributes on the slab allocator + entry-args atomics are similarly gated (Mach-O rejects bare ELF section names; the host tests would fail to link otherwise). Test runtime: <1s on M4. The script `cd`s to a tempdir before invoking cargo, escaping the workspace's `[build] target = "riscv64gc-..."` and `[unstable] build-std` config — those would otherwise force a riscv64 build with two copies of `core`.
 - **Kill-orphan-QEMU wrapper script.** ~~Not a milestone, but pain during M31/M32 overnight: parallel `make run` sessions leave zombie qemu-system-riscv64 processes holding the disk lock. A 10-line `scripts/kill-orphans.sh` would save future time.~~ **Shipped 2026-05-04** as `scripts/kill-orphans.sh` (~50 lines with `-9` and `-n` modes; auto-escalates SIGTERM → SIGKILL after 2s).
 
-## Open Questions for Author
+## Open Questions for Author (now resolved)
 
-These are the decisions I don't want to make unilaterally. Any of these can redirect the whole sequence.
+These were the decisions I didn't want to make unilaterally. They have all been resolved by the work that shipped — preserved here for the historical record.
 
 1. **Should `SYS_MAP_NODE` use the existing `USER_DATA_BASE` window, or carve a new window for anonymous memory?** Separating is cleaner but eats more L0 table space. Recommend: shared window with bitmap for M33; revisit if fragmentation gets painful.
+   - **Resolved (M33):** shared window with a direct L0-PTE walk (not a separate bitmap — at 16 slots the walk is trivial). See capability-edges.md § "M33 Implementation Notes" #2.
 
 2. **On delegation without a `grant` cap, what happens?** Option: anything in `exec` U-mode code can ecall `SYS_DELEGATE_EDGE` for any outgoing edge it owns. Option: require an explicit grant cap. I recommended the latter above but this is a thesis-shaping call.
+   - **Resolved (M35):** explicit `grant` cap required. Per-target (not per-(target, label)). MMU-inert like `traverse`. See capability-edges.md § "M35 Implementation Notes" #5.
 
 3. **Should `list_edges` evolve to return the label string (Proposal B.1), or should there be a separate syscall (B.2)?** I recommended B.2 but B.1 might be cleaner long-term.
+   - **Resolved (M34):** B.2 — `SYS_READ_EDGE_LABEL` as an additive syscall. Pay-as-you-go; no M30 caller breakage. See capability-edges.md § "M34 Implementation Notes" #1.
 
-4. **How much of M33's scope is "ship CDT cleanly" vs. "ship CDT + a demo"?** The first demo of delegation will have a lot of failure modes worth finding. Recommend a scoped demo (task A creates a node, delegates `write` to task B, B writes content, A revokes, B's next write faults). That's ~3 small programs and the kernel bits to support them.
+4. **How much of M33's scope is "ship CDT cleanly" vs. "ship CDT + a demo"?**
+   - **Resolved (M35 phase 3):** scoped to two binaries instead of three — `cdtsmoke-alpha` (delegate+revoke within one lifetime) and `cdtsmoke-beta` (delegate+exit, cascade-on-exit). Test-γ shape per `knowledge/notes/cdt-grant-policy.md`; α's baseline read of B verifies β's invariant. See capability-edges.md § "M35 Implementation Notes" #7.
 
 5. **`helios-libc` — should it start now or wait?** `rust-std.md` has it after M33. Waiting keeps focus on the native toolkit, but `helios-libc` is the gate to ports like `busybox`, `vim`, `lua`. No strong reason to rush it — native-first is the thesis — but the question is worth noting.
+   - **Resolved (implicit, through M35):** waited. Native-first held — M33/M34/M35 built out the cap model and the graph-native utility set (ls, cat, gtree, gfollow, gwrite, bigalloc, mmap, cdtsmoke-α/β). `helios-libc` remains a possible future direction, not blocking and not queued.
 
 ---
 
-*This doc is a proposal, not a decision. Edit or supersede as needed.*
+*This doc was a proposal, not a decision. It has now been fully consumed — all three proposals shipped, all five open questions resolved. Preserved for historical reference.*

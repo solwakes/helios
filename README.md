@@ -44,6 +44,7 @@ see [`docs/`](docs/) for design rationale and architecture notes:
 - **dynamic memory via `SYS_MAP_NODE`** — a U-mode task can request fresh zeroed writable memory at runtime. The kernel mints a `Memory` node, maps backing frames into the task's VA window, and grants a `write` edge from caller → new node. `spawn mmap` allocates 32 KiB + 8 KiB and verifies disjoint usable regions. (M33)
 - **`alloc::*` backed by kernel slabs** — helios-std's `GlobalAlloc` now requests its backing memory from the kernel via `SYS_MAP_NODE` (slab-chained bump allocator) instead of a 64 KiB in-binary arena. Every Rust user binary dropped by ~64 KiB on disk; `Vec` / `String` / `format!` grow by chaining fresh slabs as needed. `spawn bigalloc` allocates 16 KiB + 32 KiB (forcing slab chaining) and verifies the edges appear as `write`-to-Memory-node entries in `list_edges(self_id())`. (M33.5)
 - **full edge labels via `SYS_READ_EDGE_LABEL`** — `SYS_LIST_EDGES` returns a compact cap-kind byte per edge; structural labels like `child` / `parent` show up as `unknown`. A follow-up syscall (same `traverse` cap) copies the full UTF-8 label into a user buffer. `spawn ls 1` now prints `child` for all 19 root outgoing edges instead of `?`. (M34)
+- **runtime capability delegation + cascade-revocation (CDT)** — a U-mode task can grant one of its outgoing edges to another task via `SYS_DELEGATE_EDGE` and revoke it via `SYS_REVOKE_EDGE`, gated by a fifth cap label `grant`. Each delegated edge records its parent edge; revoking cascades through the derivation tree and invalidates the affected task's page tables. Task exit cascade-revokes everything the dying task delegated, so caps don't outlive their principal. `spawn cdtsmoke-alpha` and `spawn cdtsmoke-beta` exercise the full chain end-to-end — alpha's baseline read of B is what verifies beta's cascade-on-exit ran. Authority is now first-class user-space-mutable. (M35)
 
 ## building
 
@@ -281,6 +282,7 @@ the graph is the filesystem, the process table, the device tree, and the IPC mec
 | M33 | `SYS_MAP_NODE` — dynamic user memory via graph-native syscall (`spawn mmap`) | — |
 | M33.5 | helios-std `GlobalAlloc` rerouted through `SYS_MAP_NODE` slabs (`spawn bigalloc`) | — |
 | M34 | `SYS_READ_EDGE_LABEL` — structural edge labels in user-space (`spawn ls 1` shows `child` not `?`) | — |
+| M35 | cap delegation + CDT cascade-revocation (`SYS_DELEGATE_EDGE`, `SYS_REVOKE_EDGE`, fifth `grant` label, `spawn cdtsmoke-α` / `spawn cdtsmoke-β`) | `c808003` |
 
 ## license
 

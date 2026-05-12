@@ -176,7 +176,11 @@ Revised order:
 - **M29–M30 (done):** Syscall ABI — `READ_NODE`, `PRINT`, `EXIT`, then `WRITE_NODE`, `LIST_EDGES`, `FOLLOW_EDGE`, `SELF` + `traverse` cap kind.
 - **M31 (done):** `helios-std` crate as described above; `hello-user` as the first native binary.
 - **M32 (done):** Graph-native Rust toolkit — `ls <id>` (lists outgoing edges via `SYS_LIST_EDGES`) and `cat <id>` (reads content via `SYS_READ_NODE`). Both live in `crates/{ls,cat}-user/` and link against helios-std. Each target's capability is granted at spawn time by the shell (`traverse` for ls, `read` for cat). These are the first non-trivial graph-native tools — and they validated that the M31 ergonomics carry over: each binary's `main()` is ~50 lines of normal-looking Rust.
-- **M33+:** `tree`/`grep`-style tools. A `SYS_MAP_NODE`-style page-grant syscall (lets `helios-std` request fresh R/W pages instead of living inside its binary image), followed by a real heap allocator. Then cap delegation + CDT for revocation. Then `helios-libc` as a Rust library, `riscv64-helios` rustc target, and POSIX shim hardened enough for DOOM-in-U-mode.
+- **M33 (done):** `SYS_MAP_NODE` — kernel-granted anonymous writable memory (the page-grant syscall this section anticipated). User binaries can request fresh R/W pages at runtime rather than living inside their binary image. Demo at `crates/mmap-user/`.
+- **M33.5 (done):** Slab-chained `GlobalAlloc` backed by `SYS_MAP_NODE` (the "real heap allocator" follow-on). User binaries shrank by ~64 KiB each as the in-binary bump arena went away.
+- **M34 (done):** `SYS_READ_EDGE_LABEL` — structural edge labels surfaced to user-space (`spawn ls 1` now prints `child` instead of `?`).
+- **M35 (done):** Cap delegation + CDT for revocation. `SYS_DELEGATE_EDGE`, `SYS_REVOKE_EDGE`, fifth `grant` cap label, tombstone-based stable edge identity, cascade-on-revoke + cascade-on-exit. helios-std exposes `graph::delegate_edge` / `graph::revoke_edge`; litmus binaries `cdtsmoke-alpha-user` / `cdtsmoke-beta-user` validate the chain end-to-end.
+- **M36+ (planned):** Multiple coexisting user tasks (lifts the single-hart-cooperative simplifications M35 leaned on). `tree`/`grep`-style tools when they want to ship (the first-pass utility set — ls/cat/gtree/gfollow/gwrite — already covers most of it). Then `helios-libc` as a Rust library, `riscv64-helios` rustc target, and POSIX shim hardened enough for DOOM-in-U-mode.
 
 ## Cargo Considerations
 
@@ -276,4 +280,4 @@ About 70 KB on disk, most of which is the bump-heap arena.
 
 ---
 
-*Last reviewed: 2026-04-17 (post-M33.5 — `GlobalAlloc` now backed by `SYS_MAP_NODE` slabs; Proposal A from `post-m32-directions.md` is fully closed). Revisit once cap delegation + CDT lands.*
+*Last reviewed: 2026-05-12 (post-M35 — cap delegation + CDT shipped; Proposal C from `post-m32-directions.md` is fully closed; all three post-M32 proposals now shipped). Revisit once M36 (multi-task) or `helios-libc` lands.*

@@ -1,6 +1,6 @@
 # Capability Edges: Graph-Native Security
 
-*Status: Design committed M28, first implementation M29, ABI expanded M30 + M33 + M34. This document describes the model; implementation details follow as they land.*
+*Status: Design committed M28, first implementation M29, ABI expanded M30 + M33 + M34 + M35. This document describes the model; implementation details follow as they land.*
 
 ## The Core Idea
 
@@ -53,13 +53,15 @@ The task now sees exactly its permitted view. Any access to memory outside that 
 
 The MMU does the enforcement. The kernel only has to build the right page table.
 
-## Syscall API (M29 + M30 + M33 + M34)
+## Syscall API (M29 + M30 + M33 + M34 + M35)
 
 The ABI is append-only and numbered; higher numbers were added in later
 milestones. M30 introduced the `traverse` capability kind; M33 added
 `MAP_NODE` for kernel-granted anonymous writable memory; M34 added
 `READ_EDGE_LABEL` to let user programs see structural edge labels
-(`child`, `parent`, etc.) that `LIST_EDGES` only reports as `unknown`.
+(`child`, `parent`, etc.) that `LIST_EDGES` only reports as `unknown`;
+M35 added `DELEGATE_EDGE` / `REVOKE_EDGE` (the CDT runtime — see
+"Delegation and Revocation" below) and the fifth cap label `grant`.
 
 | Num | Name               | Args                                                           | Cap check              | Returns                                       |
 |-----|--------------------|----------------------------------------------------------------|------------------------|-----------------------------------------------|
@@ -72,31 +74,47 @@ milestones. M30 introduced the `traverse` capability kind; M33 added
 | 7   | `SELF`             | —                                                              | — (always allowed)     | caller's task node id                         |
 | 8   | `MAP_NODE`         | `a0`=size_bytes, `a1`=flags (=0)                               | — (self-granting `write`) | user VA of first mapped page, or -EINVAL / -ENOMEM |
 | 9   | `READ_EDGE_LABEL`  | `a0`=src_id, `a1`=edge_idx, `a2`=buf, `a3`=buf_len             | `traverse` edge to src | label bytes written, or -EPERM / -ENOENT / -EINVAL |
+| 10  | `DELEGATE_EDGE`    | `a0`=target_id, `a1`=to_task_id, `a2`=label_buf, `a3`=label_len | caller holds matching live edge + `grant` to target | new edge's `vec_position` on to_task, or -EPERM / -ENOENT |
+| 11  | `REVOKE_EDGE`      | `a0`=target_id, `a1`=label_buf, `a2`=label_len                 | caller holds matching live edge | count of edges cascade-tombstoned, or -EPERM / -ENOENT |
 
 ### Cap-check kinds
 
 The syscall layer uses a `has_cap(target, label)` helper that scans the
 current task's outgoing edges for an edge with the given label pointing at
-`target`. Four labels are recognised today:
+`target`. Five labels are recognised today:
 
 - `read`  — grants `READ_NODE` and is an R-only MMU mapping.
 - `write` — grants `WRITE_NODE`, auto-implies `read`, and is an R/W MMU mapping.
 - `exec`  — grants execution of code from the target, R/X MMU mapping.
 - `traverse` — grants `LIST_EDGES` / `FOLLOW_EDGE` from the target; does
   NOT map anything into the task's page table (it's a pure-syscall cap).
+- `grant` (M35) — grants `DELEGATE_EDGE` *for caps pointing at* the
+  target; MMU-inert (like `traverse`). A task can hold any of
+  `read`/`write`/`exec`/`traverse` on T without `grant` on T; in that
+  case it can use the cap itself but cannot pass it onward. Per-target,
+  not per-(target, label) — see M35 implementation notes for the
+  rationale.
 
 ### LIST_EDGES entry layout (16 bytes each, little-endian)
 
 ```
 offset  type    meaning
  0      u64     target node id
- 8      u8      label kind: 0=unknown, 1=read, 2=write, 3=exec, 4=traverse
+ 8      u8      label kind: 0=unknown, 1=read, 2=write, 3=exec, 4=traverse, 5=grant
  9      u8[7]   padding (zero)
 ```
 
 Entries are returned in the order edges were added to the source node
-(the graph's `Vec<Edge>` iteration order). `FOLLOW_EDGE` also respects
-this order and returns the *first* matching edge.
+(the graph's `Vec<Edge>` iteration order), with tombstoned edges
+(M35) skipped. `FOLLOW_EDGE` also respects this order and returns
+the *first* matching edge.
+
+Note: the index a caller sees in a `LIST_EDGES` result is *not* the
+edge id; it's a list position over live edges only. Edge ids
+(`(src_id, vec_position)`) are an internal kernel-side concept used
+by CDT (M35). The wire-format index suffices for `FOLLOW_EDGE` and
+`READ_EDGE_LABEL`, both of which iterate live edges in the same
+order and re-resolve by position.
 
 Structural labels (`child`, `parent`, `self`, or any other string the
 graph stores that isn't one of the four cap kinds) show up as kind-byte
@@ -114,15 +132,24 @@ dereferences the pointer directly. Out-of-range buffers → `-EINVAL`.
 ### Still planned
 
 - `APPEND_NODE` (gated on `write` edge)
-- `CREATE_NODE`, `ADD_EDGE` (gated by a "create"/"grant" cap — target: M34+, same milestone as CDT)
+- `CREATE_NODE`, `ADD_EDGE` — runtime graph mutation from U-mode. CDT
+  (M35) added `DELEGATE_EDGE` / `REVOKE_EDGE`, which let a task
+  rewire *existing* edges, but a task still cannot mint a fresh node
+  or attach an edge to an arbitrary pair of nodes — only the kernel
+  does that today (at boot, on `MAP_NODE`, on `DELEGATE_EDGE`). The
+  natural cap gate is `grant` on the new edge's *source* node;
+  scoping is a future-milestone decision.
 - `UNMAP_NODE` / `map_node` free path — M33 has no per-allocation
   reclaim. A region dies with the task.
-- Rerouting helios-std's `GlobalAlloc` through `MAP_NODE` — the syscall
-  ships in M33, but the in-binary bump heap is still what backs
-  `alloc::*`. Shrinking it and chaining kernel-granted slabs is a
-  follow-on.
+- ~~Rerouting helios-std's `GlobalAlloc` through `MAP_NODE`~~ —
+  shipped in M33.5. Tracked here for historical reference; see
+  M33.5 implementation notes below.
 
 ## Delegation and Revocation
+
+*Shipped in M35.* The rationale and the model below were the design
+target; see "M35 Implementation Notes" further down for what actually
+landed.
 
 When task A delegates a capability to task B, A is copying one of its outgoing edges to be outgoing from B. Example: `A → framebuffer [write]` plus `add_edge(B, framebuffer, write)` = `B → framebuffer [write]`.
 
@@ -130,9 +157,24 @@ For proper revocation semantics, we need to know that B's edge is *derived from*
 
 The canonical solution is a **capability derivation tree (CDT)**: each derived edge knows its parent edge. Revoking a parent cascades to all descendants. This is how seL4 handles revocation.
 
-In graph terms: delegated edges get a `derived_from` back-link to the source edge. Revoke source → walk the derivation tree → remove descendants.
+In graph terms: delegated edges get a `derived_from` back-link to the source edge. Revoke source → walk the derivation tree → remove descendants. Task exit also cascade-revokes the dying task's outgoing edges — caps don't outlive the principal that granted them.
 
-CDT semantics are planned for M32 (originally scheduled for M31 before that slot was redirected to shipping helios-std). M29–M31 ship without delegation — edges are kernel-declared-only.
+CDT semantics shipped in M35, three phases:
+
+1. **Phase 1** (commit `834d23c`) — graph layer: `Edge { live,
+   derived_from }`, `EdgeId(src_node_id, vec_position)`, tombstone-based
+   stable identity, `Graph::cascade_tombstone` BFS over the
+   reverse-`derived_from` relation, ~14 iteration sites updated to
+   skip tombstones.
+2. **Phase 2** (commit `5591534`) — syscalls: `SYS_DELEGATE_EDGE`,
+   `SYS_REVOKE_EDGE`, fifth cap label `grant`, active-task cap-cache
+   rebuild + page-table unmap + `sfence.vma` on revoke, task-exit
+   cascade.
+3. **Phase 3** (commit `c808003`) — litmus: `cdtsmoke-alpha-user` and
+   `cdtsmoke-beta-user` exercise the full chain in QEMU, with α's
+   baseline verifying β's cascade-on-exit ran cleanly.
+
+The "kernel-declared-only" world that M29–M34 shipped in (no delegation, edges minted only at task spawn) is now historical. Tasks can hand each other authority at runtime, and the kernel cascades revocations through the resulting tree.
 
 ## Boot-Time Capability Allocation
 
@@ -174,8 +216,8 @@ Plan 9's namespaces don't enforce; the file server does. Helios edges are enforc
 - **M33** (done): `SYS_MAP_NODE` — kernel-granted anonymous writable memory. Tasks can mint fresh `NodeType::Memory` nodes at runtime; the kernel allocates backing frames, adds a `write` edge from caller → new node (implying `read`), and maps the frames into the task's data-VA window. Demo at `crates/mmap-user/` (`spawn mmap`). See "M33 Implementation Notes" below.
 - **M33.5** (done, pure user-space): helios-std's `GlobalAlloc` now back-ends on `SYS_MAP_NODE` instead of a 64 KiB in-binary bump arena. Slab-chained bump allocator; first `alloc` call installs a 16 KiB slab via `graph::map_node`; oversized requests install a slab sized to fit. Each slab appears as a `write` edge from the task to a `NodeType::Memory` node; kernel cleanup at task exit reclaims everything. No kernel changes — all user-space. Demo at `crates/bigalloc-user/` (`spawn bigalloc`) allocates a 16 KiB `Vec<u64>`, then a 32 KiB `Vec<u64>` to force slab chaining, and inspects `list_edges(self)` to verify multiple memory edges exist.
 - **M34** (done): `SYS_READ_EDGE_LABEL` — read a single outgoing edge's full UTF-8 label by index. Closes the "everything shows as `?`" gap: `SYS_LIST_EDGES` keeps its compact 16-byte entries with a cap-kind byte, and user code issues one follow-up syscall per structural edge it wants the actual label for. Shipped as append-only (ABI not broken); `spawn ls 1` now prints `child` for all 19 root outgoing edges instead of `?`. See "M34 Implementation Notes" below.
-- **M35**: Cap delegation + CDT for revocation. (Was going to be M34; `SYS_READ_EDGE_LABEL` shipped first because it's a ~40 LOC kernel change and `ls` was staring at `?` for three milestones straight.)
-- **M36**: Multiple user tasks coexisting.
+- **M35** (done): Cap delegation + CDT for revocation. Three phases: graph-layer tombstones + `derived_from` lineage (phase 1, commit `834d23c`); `SYS_DELEGATE_EDGE` / `SYS_REVOKE_EDGE` + fifth `grant` cap label + active-task cap-cache + PT invalidation + task-exit cascade (phase 2, commit `5591534`); `cdtsmoke-alpha` / `cdtsmoke-beta` litmus binaries (phase 3, commit `c808003`). Authority is now first-class user-space-mutable. See "M35 Implementation Notes" below.
+- **M36**: Multiple user tasks coexisting. The cross-task cascade-during-run path that M35 phase 2 punted to "post-SMP" lives here.
 - **M37**: Port DOOM to user mode (the litmus test — does the cap model handle a big, real program?).
 
 ## M30 Implementation Notes
@@ -414,6 +456,159 @@ Things the `GlobalAlloc` rewiring learned, worth preserving:
    and Rust panics via `handle_alloc_error`, which is correct OOM
    behaviour.
 
+## M35 Implementation Notes
+
+Things the CDT shipping learned, worth preserving:
+
+1. **Stable edge identity via tombstones, not swap-remove.** Each
+   `Edge` gained a `live: bool` field and an
+   `Option<EdgeId>` `derived_from` back-link, where
+   `EdgeId = (src_node_id, vec_position)`. Removal is now a
+   tombstone (`live = false`) — the vec entry stays put, so every
+   surviving edge keeps its `vec_position` forever. Alternative
+   considered: swap-remove + reverse-index side-table. Rejected for
+   simplicity-of-correctness — this is the first place where a bug
+   means a real capability leak; the cheapest implementation wins.
+   Cost paid in space: tombstones accumulate forever, but at
+   typical helios scale (small graphs, infrequent revocations) the
+   overhead is irrelevant. Profile before optimising; that was
+   Proposal C's explicit guidance and it held.
+
+2. **`Node::iter_live` was the right abstraction.** Phase 1 added
+   ~14 iteration-site updates to skip tombstones. Doing
+   `for e in node.edges.iter().filter(|e| e.live)` everywhere would
+   have been a maintenance hazard; one helper makes the tombstone
+   discipline grep-able. Same shape as M30's "self-traverse is just
+   another edge" — keep the new concern uniform with the existing
+   primitives rather than scattering ad-hoc filters.
+
+3. **Cap-cache rebuild after revoke is just "walk iter_live again".**
+   `ActiveUserTask` snapshots edges at spawn-time into five
+   `Vec<u64>`s (`read_allowed`, `write_allowed`, `exec_allowed`,
+   `traverse_allowed`, `grant_allowed`). After any cascade
+   revocation, the simplest correct thing is to rebuild all five
+   from scratch by re-walking the active task's `iter_live`. O(edges
+   on self), runs once per `SYS_REVOKE_EDGE`, no delta reasoning.
+   Cheap at M35 scale; revisit if profiling ever shows it.
+
+4. **Active-task-only PT invalidation.** `SYS_REVOKE_EDGE` is called
+   *from* the active task. Single-hart, cooperative — only the
+   active task can issue syscalls — so any edge tombstoned by the
+   cascade that *also* lives on the active task is the only one
+   whose page-table mappings need to come down. Cross-task
+   cascade-during-run is structurally impossible on single-hart and
+   is explicitly punted to "post-SMP" (M36+). The active task's
+   `mappings: Vec<Mapping>` (a clone of `aspace.mappings` extended
+   by each `SYS_MAP_NODE` call) drives the unmap; one `sfence.vma
+   zero, zero` at end of syscall flushes the full TLB. Selective
+   `sfence.vma vaddr, asid` flushes need ASIDs, which Helios doesn't
+   use yet.
+
+5. **The fifth label `grant` is MMU-inert and per-target.** Like
+   `traverse`, `grant` adds nothing to the page table; it is a
+   pure-syscall cap consulted only by `SYS_DELEGATE_EDGE`. Two
+   shapes were considered:
+   - **per-target** — `grant` on T iff the holder may delegate any
+     of its outgoing edges pointing to T. Coarse but simple.
+   - **per-(target, label)** — separate `grant_read`, `grant_write`,
+     etc., on T. Finer but doubles the cap-label surface.
+
+   Per-target won for M35. The granularity argument: if A wants to
+   delegate `read` but not `write` to T, A can simply be granted
+   only the `read` edge in the first place — the granularity comes
+   from *which edges A holds*, not from which-grant-flavours A
+   holds. Matches the rest of the model where edges-are-caps
+   rather than caps-have-attributes. Reversible if real workloads
+   ever need it.
+
+6. **Cascade-on-task-exit.** When a task exits, the kernel walks
+   its outgoing edges and `cascade_tombstone`s each one before the
+   existing memory-node cleanup. Anyone the dying task delegated
+   to loses their derived caps. Reason: if A could leak caps that
+   outlive A, an exited task becomes a permanent shadow authority.
+   Principle: caps don't outlive the principal that granted them.
+   Kernel-declared boot edges have `derived_from = None`, so the
+   kernel-as-principal never exits and root caps never cascade-
+   revoke — that's the right shape.
+
+7. **β's invariant verified by α's baseline.** Phase 3's litmus
+   test split into two crates: `cdtsmoke-alpha` exercises
+   delegate-then-revoke within one task's lifetime;
+   `cdtsmoke-beta` exercises delegate-then-exit without explicit
+   revoke. β's invariant — that exit cascades the derived edge
+   away — is **observable from α**: α's first action is
+   `list_edges(B)`, which returns zero, because the edge β
+   delegated in a previous run was tombstoned by β's exit. The
+   proof of β's invariant lives inside α's output. Registering
+   this as a pattern: paired-tests-where-one-verifies-the-other's-
+   precondition. Niche shape, but the structural cleanliness
+   matters — both binaries together are stronger than either
+   alone.
+
+8. **Non-exhaustive match errors as the regression catch.** Adding
+   `Label::Grant` (kind byte 5) was a public-enum extension. The
+   only unanticipated impl decision during phase 3 was that
+   `ls-user`'s `match label { … }` over `Label` was non-exhaustive
+   — the compiler surfaced this as an error in five lines of fix.
+   Registering: **non-exhaustive match errors are the cheapest
+   possible regression catch for public-enum-extends.** Another
+   small reason to prefer enums-with-arms over bitfields-with-flags.
+
+9. **Single-hart simplification carried through.** The "active task
+   is the only running thing" assumption (cooperative scheduler,
+   one user task at a time) is leaned on at three points in M35:
+   (a) cap-cache mutation only touches the active task, (b)
+   page-table invalidation only happens on the active task, (c)
+   cross-task cascade-during-run is impossible. M36 ("multiple
+   user tasks coexisting") will need to revisit each. For M35 each
+   simplification was free — the right time to think about SMP is
+   now, the right time to ship is single-hart.
+
+10. **Edge id encoding: two args, not packed.** `EdgeId = (u64, u32)`
+    doesn't fit in one register. Considered packing into one u64
+    (limit src to 4G nodes + edge index to 4G — fine in practice
+    but a forced future-proofing call) versus passing as two args.
+    Passing as two args won — clean ABI, no bit-twiddling, no
+    future migration if helios ever exceeds 4G nodes. Both
+    `SYS_DELEGATE_EDGE` and `SYS_REVOKE_EDGE` actually take
+    `(target_node_id, label_buf, label_len)` rather than raw edge
+    ids — the kernel resolves the (caller, target, label) tuple to
+    the matching live edge at syscall time. This trades a tiny
+    O(edges-on-self) lookup for not having to expose `EdgeId` as
+    part of the user ABI.
+
+11. **`SYS_LIST_EDGES_DETAIL` not shipped.** Phase 1 considered
+    adding a syscall that returns each live edge's `EdgeId`
+    alongside its label byte, for callers that want to drive
+    `SYS_REVOKE_EDGE` by id. Decided against for M35: callers
+    already know `(target, label)` for any cap they hold, and the
+    kernel-side resolve is O(edges-on-self) — cheap. If a future
+    caller needs id-stability across `list_edges` calls (e.g. an
+    interactive grant editor), `SYS_LIST_EDGES_V2` can ship later
+    additively.
+
+12. **Non-goals deliberately deferred.** Several CDT-adjacent
+    features were explicitly out of M35: per-allocation free of
+    memory nodes (still task-exit-only); `SYS_UNMAP_NODE`; map_node
+    delegation (the syscall self-grants `write` but does *not*
+    self-grant `grant`, so a task can't onward-delegate its
+    anonymous memory without an explicit grant edge); shared-memory
+    IPC primitives. CDT enables these; M35 doesn't ship one. The
+    grant-policy note (`knowledge/notes/cdt-grant-policy.md`)
+    captured the per-target-only-during-spawn decision so the
+    auto-grant-on-map_node option (b) stays separable.
+
+13. **Litmus from QEMU, no host-side graph tests yet.** The kernel
+    is `no_std` and the project doesn't currently support `cargo
+    test` for kernel code (only helios-std has host tests via
+    `scripts/test-host.sh`). Phase 3's cdtsmoke binaries cover the
+    cascade end-to-end *via QEMU* — single boot, three commands,
+    UART transcript captures every observable assertion. A
+    follow-on "graph-host-test crate" wrapping the Graph
+    primitives is registered as possible future work but isn't
+    blocking — the binaries are the integration test M35 was
+    always going to need.
+
 ---
 
-*Last reviewed: 2026-04-17 (post-M33.5 — helios-std's `GlobalAlloc` now back-ends on `SYS_MAP_NODE` slabs; Proposal A from `post-m32-directions.md` is fully closed). Next review after CDT lands.*
+*Last reviewed: 2026-05-12 (post-M35 — CDT shipped; Proposal C from `post-m32-directions.md` is fully closed). Next review when something material in the cap model changes — likely M36 (multi-task scheduler) or whenever shared-memory IPC lands.*
