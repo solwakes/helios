@@ -16,6 +16,8 @@
 #   - gtree-user : recursive `tree`-style graph walker (post-M34 utility).
 #   - gfollow-user : single-step labelled-edge follow (post-M34 utility).
 #   - gwrite-user : node-content overwrite (post-M34 utility).
+#   - cdtsmoke-alpha-user : M35 CDT litmus α — delegate+revoke within A.
+#   - cdtsmoke-beta-user  : M35 CDT litmus β — delegate+exit cascade.
 
 [workspace]
 resolver = "2"
@@ -29,6 +31,8 @@ members = [
     "gtree-user",
     "gfollow-user",
     "gwrite-user",
+    "cdtsmoke-alpha-user",
+    "cdtsmoke-beta-user",
 ]
 
 [profile.release]

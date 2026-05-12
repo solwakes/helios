@@ -41,6 +41,14 @@ pub const SYS_MAP_NODE: usize = 8;
 /// M34: read an outgoing edge's full string label by index. Closes the
 /// "everything shows as ?" gap in `SYS_LIST_EDGES`.
 pub const SYS_READ_EDGE_LABEL: usize = 9;
+/// M35: copy one of the caller's outgoing edges onto another task,
+/// recording the caller's edge as the new edge's CDT parent. Needs both
+/// the matching outgoing edge AND a live `grant` edge on the target.
+pub const SYS_DELEGATE_EDGE: usize = 10;
+/// M35: tombstone one of the caller's outgoing edges and every CDT
+/// descendant. Cascades transitively. For exec/read/write edges on the
+/// active task, the corresponding PT slots are unmapped + TLB flushed.
+pub const SYS_REVOKE_EDGE: usize = 11;
 
 // ---------------------------------------------------------------------------
 // Errno values returned by syscalls (matching the kernel's constants)
@@ -238,6 +246,65 @@ pub unsafe fn sys_read_edge_label(
     )
 }
 
+/// `SYS_DELEGATE_EDGE(target_node_id, target_task_node_id, label_va,
+/// label_len)` — copy one of the caller's outgoing edges onto another
+/// task. The caller must hold a live outgoing edge with `label`
+/// pointing at `target_node_id`, AND a live `grant` edge on
+/// `target_node_id`. The new edge records the caller's edge as its CDT
+/// parent — revoking the caller's edge cascades to remove this one.
+///
+/// Returns the raw vec_position of the new edge on success (a small
+/// non-negative integer), or a negative errno on failure:
+///
+/// - `EPERM` — caller lacks the source edge OR lacks `grant` on target.
+/// - `ENOENT` — `target_task_node_id` or `target_node_id` missing.
+/// - `EINVAL` — bad label (empty / >64 bytes / not UTF-8 / out-of-range
+///   buffer).
+///
+/// See [`crate::graph::delegate_edge`] for the typed wrapper.
+#[inline(always)]
+pub unsafe fn sys_delegate_edge(
+    target_node_id: u64,
+    target_task_node_id: u64,
+    label_va: *const u8,
+    label_len: usize,
+) -> isize {
+    syscall4(
+        SYS_DELEGATE_EDGE,
+        target_node_id as usize,
+        target_task_node_id as usize,
+        label_va as usize,
+        label_len,
+    )
+}
+
+/// `SYS_REVOKE_EDGE(target_node_id, label_va, label_len)` — tombstone
+/// the caller's outgoing edge `(label, target_node_id)` and every CDT
+/// descendant. For exec/read/write edges on the active task, the
+/// corresponding PT slots are unmapped and the TLB is flushed.
+///
+/// Returns the count of tombstoned edges on success (>= 1), or a
+/// negative errno on failure:
+///
+/// - `EINVAL` — bad label (empty / >64 bytes / not UTF-8 / out-of-range
+///   buffer) OR no active task.
+/// - `ENOENT` — no matching live outgoing edge on the caller.
+///
+/// See [`crate::graph::revoke_edge`] for the typed wrapper.
+#[inline(always)]
+pub unsafe fn sys_revoke_edge(
+    target_node_id: u64,
+    label_va: *const u8,
+    label_len: usize,
+) -> isize {
+    syscall3(
+        SYS_REVOKE_EDGE,
+        target_node_id as usize,
+        label_va as usize,
+        label_len,
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Host-side unit tests for syscall numbers + errno constants.
 // ---------------------------------------------------------------------------
@@ -251,8 +318,8 @@ pub unsafe fn sys_read_edge_label(
 mod tests {
     use super::*;
 
-    /// Pin the 9 syscall numbers in M30/M33/M34 to their kernel ABI
-    /// values. If the kernel renumbers, this test fails before the
+    /// Pin the 11 syscall numbers (M30 through M35) to their kernel
+    /// ABI values. If the kernel renumbers, this test fails before the
     /// next QEMU run does.
     #[test]
     fn syscall_numbers_match_kernel_abi() {
@@ -265,6 +332,8 @@ mod tests {
         assert_eq!(SYS_SELF, 7);
         assert_eq!(SYS_MAP_NODE, 8);
         assert_eq!(SYS_READ_EDGE_LABEL, 9);
+        assert_eq!(SYS_DELEGATE_EDGE, 10);
+        assert_eq!(SYS_REVOKE_EDGE, 11);
     }
 
     /// Errno constants are negative single-digit values; pin them to

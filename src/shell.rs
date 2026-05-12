@@ -1316,6 +1316,8 @@ fn cmd_spawn(name: &str, arg: &str, arg2: &str) {
         crate::println!("                spawn gtree [id] [depth]  (recursive `tree`-style walker)");
         crate::println!("                spawn gfollow <src> <label>  (single-step labelled-edge follow)");
         crate::println!("                spawn gwrite <id> <content>  (overwrite node content)");
+        crate::println!("                spawn cdtsmoke-α  (M35: delegate+revoke within A)");
+        crate::println!("                spawn cdtsmoke-β  (M35: delegate+exit cascade)");
         return;
     }
     // Shortcut: "spawn userdemo" launches the boot-time demo code node.
@@ -1799,6 +1801,75 @@ fn cmd_spawn(name: &str, arg: &str, arg2: &str) {
         crate::println!("user task returned {}", rc);
         return;
     }
+    // M35: CDT litmus α — delegate-then-revoke within A's lifetime.
+    //
+    // `spawn cdtsmoke-α` (also accepts `cdtsmoke-alpha`) runs the
+    // litmus binary against the boot-graph `cdtsmoke-target` T and
+    // `cdtsmoke-b-task` B nodes. The grant-policy note (2026-05-11)
+    // chose option (a): shell wires `grant` at task spawn alongside
+    // `write` / `traverse`. See `notes/cdt-grant-policy.md`.
+    //
+    // Cap-grant:
+    //   - exec on the binary code node (handled by run_user_task_with_caps).
+    //   - self-traverse (handled by run_user_task_with_caps).
+    //   - traverse on B (so the binary can list B's edges via
+    //     SYS_LIST_EDGES to assert pre/post counts).
+    //   - write on T (the cap being delegated).
+    //   - grant on T (authorises SYS_DELEGATE_EDGE on T).
+    //
+    // Args: a0 = T, a1 = B.
+    if name == "cdtsmoke-α" || name == "cdtsmoke-alpha" {
+        let code_id = crate::user::cdtsmoke_alpha_code_id();
+        let target = crate::user::cdtsmoke_target_id();
+        let b_task = crate::user::cdtsmoke_b_task_id();
+        if code_id == 0 || target == 0 || b_task == 0 {
+            crate::println!("cdtsmoke-α: kernel demo nodes not initialised");
+            return;
+        }
+        crate::println!(
+            "helios> spawning M35 'cdtsmoke-α' — delegate+revoke within A (T=#{}, B=#{}, code #{})",
+            target, b_task, code_id,
+        );
+        let rc = crate::user::run_user_task_with_caps(
+            code_id,
+            &[("traverse", b_task), ("write", target), ("grant", target)],
+            true, // self-traverse — harmless and useful for symmetry with explorer/hello
+            target as usize,
+            b_task as usize,
+        );
+        crate::println!("user task returned {}", rc);
+        return;
+    }
+    // M35: CDT litmus β — delegate-then-exit (cascade-on-exit).
+    //
+    // Identical cap-grant to α. Different binary: the β litmus
+    // delegates write→B then exits *without* revoking. The kernel's
+    // post-exit cascade-tombstone walks A's outgoing edges and
+    // transitively kills the derived edge on B; observable via the
+    // `[user] task #N exit: cascade-tombstoned M edge(s) via CDT`
+    // console line.
+    if name == "cdtsmoke-β" || name == "cdtsmoke-beta" {
+        let code_id = crate::user::cdtsmoke_beta_code_id();
+        let target = crate::user::cdtsmoke_target_id();
+        let b_task = crate::user::cdtsmoke_b_task_id();
+        if code_id == 0 || target == 0 || b_task == 0 {
+            crate::println!("cdtsmoke-β: kernel demo nodes not initialised");
+            return;
+        }
+        crate::println!(
+            "helios> spawning M35 'cdtsmoke-β' — delegate+exit cascade (T=#{}, B=#{}, code #{})",
+            target, b_task, code_id,
+        );
+        let rc = crate::user::run_user_task_with_caps(
+            code_id,
+            &[("traverse", b_task), ("write", target), ("grant", target)],
+            true,
+            target as usize,
+            b_task as usize,
+        );
+        crate::println!("user task returned {}", rc);
+        return;
+    }
     // Numeric argument -> treat as a code node id and launch as user task.
     if let Some(id) = parse_usize(name) {
         let code_id = id as u64;
@@ -1824,7 +1895,7 @@ fn cmd_spawn(name: &str, arg: &str, arg2: &str) {
         "producer" => crate::task::demo_producer,
         "consumer" => crate::task::demo_consumer,
         _ => {
-            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), ls <id>, cat <id> (M32), mmap (M33), bigalloc (M33.5), gtree [id] [depth], gfollow <src> <label>, gwrite <id> <content>, or a numeric code node id", name);
+            crate::println!("Unknown task '{}'. Available: counter, fibonacci, busyloop, producer, consumer, pingpong, userdemo, baddemo, who, explorer, editor, naughty, hello (M31), ls <id>, cat <id> (M32), mmap (M33), bigalloc (M33.5), gtree [id] [depth], gfollow <src> <label>, gwrite <id> <content>, cdtsmoke-α, cdtsmoke-β (M35), or a numeric code node id", name);
             return;
         }
     };

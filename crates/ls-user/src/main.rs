@@ -88,6 +88,7 @@ fn main() {
             let mut n_write = 0;
             let mut n_exec = 0;
             let mut n_trav = 0;
+            let mut n_grant = 0;
             let mut n_other = 0;
             for e in &edges {
                 match e.label {
@@ -95,13 +96,14 @@ fn main() {
                     Label::Write => n_write += 1,
                     Label::Exec => n_exec += 1,
                     Label::Traverse => n_trav += 1,
+                    Label::Grant => n_grant += 1,
                     Label::Unknown(_) => n_other += 1,
                 }
             }
-            if n_read + n_write + n_exec + n_trav + n_other > 0 {
+            if n_read + n_write + n_exec + n_trav + n_grant + n_other > 0 {
                 println!(
-                    "  (cap: read={} write={} exec={} traverse={} other={})",
-                    n_read, n_write, n_exec, n_trav, n_other,
+                    "  (cap: read={} write={} exec={} traverse={} grant={} other={})",
+                    n_read, n_write, n_exec, n_trav, n_grant, n_other,
                 );
             }
         }

@@ -1,0 +1,13 @@
+[package]
+name = "cdtsmoke-alpha-user"
+version = "0.1.0"
+edition = "2021"
+description = "CDT (M35) litmus α: delegate-then-revoke within A's lifetime"
+build = "build.rs"
+
+[[bin]]
+name = "cdtsmoke-alpha-user"
+path = "src/main.rs"
+
+[dependencies]
+helios-std = { path = "../helios-std" }

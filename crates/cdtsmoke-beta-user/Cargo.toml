@@ -1,0 +1,13 @@
+[package]
+name = "cdtsmoke-beta-user"
+version = "0.1.0"
+edition = "2021"
+description = "CDT (M35) litmus β: delegate-then-exit (cascade-on-exit)"
+build = "build.rs"
+
+[[bin]]
+name = "cdtsmoke-beta-user"
+path = "src/main.rs"
+
+[dependencies]
+helios-std = { path = "../helios-std" }

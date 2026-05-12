@@ -407,6 +407,49 @@ pub fn gfollow_program_bytes() -> &'static [u8] {
 }
 
 // ---------------------------------------------------------------------------
+// M35: `cdtsmoke-alpha-user` — CDT litmus α (delegate+revoke within A).
+//
+// `spawn cdtsmoke-α` exercises SYS_DELEGATE_EDGE + SYS_REVOKE_EDGE
+// within a single task's lifetime. The shell pre-grants `write` +
+// `grant` on a long-lived target node T and `traverse` on a long-
+// lived recipient node B; the binary delegates write→B, lists B's
+// edges to confirm, revokes its own write→T, then lists B's edges
+// again to confirm cascade-on-revoke kills the derived edge. See
+// `crates/cdtsmoke-alpha-user/src/main.rs`.
+// ---------------------------------------------------------------------------
+
+static CDTSMOKE_ALPHA_USER_BIN: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/user-bins/cdtsmoke-alpha-user.bin",
+));
+
+/// Raw bytes of the `cdtsmoke-alpha-user` CDT-α litmus program.
+pub fn cdtsmoke_alpha_program_bytes() -> &'static [u8] {
+    CDTSMOKE_ALPHA_USER_BIN
+}
+
+// ---------------------------------------------------------------------------
+// M35: `cdtsmoke-beta-user` — CDT litmus β (delegate+exit cascade).
+//
+// `spawn cdtsmoke-β` exercises task-exit cascade-tombstone. A
+// delegates write→B then exits *without* revoking; the kernel's
+// post-exit cleanup must cascade-tombstone the derived edge on B.
+// Observable via the `[user] task #N exit: cascade-tombstoned M
+// edge(s) via CDT` console line. See
+// `crates/cdtsmoke-beta-user/src/main.rs`.
+// ---------------------------------------------------------------------------
+
+static CDTSMOKE_BETA_USER_BIN: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/user-bins/cdtsmoke-beta-user.bin",
+));
+
+/// Raw bytes of the `cdtsmoke-beta-user` CDT-β litmus program.
+pub fn cdtsmoke_beta_program_bytes() -> &'static [u8] {
+    CDTSMOKE_BETA_USER_BIN
+}
+
+// ---------------------------------------------------------------------------
 // Post-M34: `gwrite-user` — node-content overwrite.
 //
 // `spawn gwrite <id> <content>` overwrites `<id>`'s content with the
@@ -2838,6 +2881,20 @@ static mut GWRITE_CODE_ID: u64 = 0;
 /// hand a content byte string to a freshly-spawned `gwrite` task.
 /// Re-used across spawns; safe because `cmd_spawn` is synchronous.
 static mut GWRITE_CONTENT_BUF_ID: u64 = 0;
+/// M35: node id of the `cdtsmoke-α` litmus program (delegate+revoke).
+static mut CDTSMOKE_ALPHA_CODE_ID: u64 = 0;
+/// M35: node id of the `cdtsmoke-β` litmus program (delegate+exit cascade).
+static mut CDTSMOKE_BETA_CODE_ID: u64 = 0;
+/// M35: long-lived target node T for cdtsmoke demos. A Text node; the
+/// litmus binaries delegate `write` access to it. Persists across
+/// spawns — revoke/cascade tombstones the edges, not the node.
+static mut CDTSMOKE_TARGET_ID: u64 = 0;
+/// M35: long-lived recipient node B for cdtsmoke demos. Stands in for
+/// a second task's task-node — never executes, just receives derived
+/// edges via SYS_DELEGATE_EDGE. Persists across spawns; the litmus
+/// binary's pre/post counts assume B has the same outgoing edges at
+/// every spawn, which holds because nothing else writes edges to it.
+static mut CDTSMOKE_B_TASK_ID: u64 = 0;
 
 /// Initialize the demo user-space nodes: a Binary code node for each
 /// demo + a Text node the M29 demo reads + the scratch node the M30
@@ -2967,6 +3024,42 @@ pub fn init() {
     }
     g.add_edge(1, "child", gwrite_buf_id);
 
+    // M35: cdtsmoke litmus binaries — α (delegate+revoke within A) and
+    // β (delegate+exit cascade).
+    let cdtsmoke_alpha_bytes = cdtsmoke_alpha_program_bytes();
+    let cdtsmoke_alpha_id = g.create_node(NodeType::Binary, "cdtsmoke-alpha-user-code");
+    if let Some(n) = g.get_node_mut(cdtsmoke_alpha_id) {
+        n.content = cdtsmoke_alpha_bytes.to_vec();
+    }
+    g.add_edge(1, "child", cdtsmoke_alpha_id);
+
+    let cdtsmoke_beta_bytes = cdtsmoke_beta_program_bytes();
+    let cdtsmoke_beta_id = g.create_node(NodeType::Binary, "cdtsmoke-beta-user-code");
+    if let Some(n) = g.get_node_mut(cdtsmoke_beta_id) {
+        n.content = cdtsmoke_beta_bytes.to_vec();
+    }
+    g.add_edge(1, "child", cdtsmoke_beta_id);
+
+    // M35: long-lived demo nodes — `cdtsmoke-target` is the delegated
+    // target T, `cdtsmoke-b-task` is the recipient task-node B. Neither
+    // is itself a task; B is a placeholder receiving derived edges that
+    // the litmus binary observes by `list_edges(B)` via its
+    // `traverse-on-B` cap. Both persist across spawns; the litmus
+    // binaries' baseline counts work because nothing else mutates B's
+    // outgoing edges between spawns.
+    let cdtsmoke_target_id = g.create_node(NodeType::Text, "cdtsmoke-target");
+    if let Some(n) = g.get_node_mut(cdtsmoke_target_id) {
+        n.content = b"cdtsmoke target node (write cap delegated here)\n".to_vec();
+    }
+    g.add_edge(1, "child", cdtsmoke_target_id);
+
+    let cdtsmoke_b_task_id = g.create_node(NodeType::System, "cdtsmoke-b-task");
+    if let Some(n) = g.get_node_mut(cdtsmoke_b_task_id) {
+        n.content = b"cdtsmoke recipient (B) -- never runs; receives derived edges\n"
+            .to_vec();
+    }
+    g.add_edge(1, "child", cdtsmoke_b_task_id);
+
     unsafe {
         DEMO_CODE_ID = code_id;
         BADDEMO_CODE_ID = bad_id;
@@ -2986,6 +3079,10 @@ pub fn init() {
         GFOLLOW_LABEL_BUF_ID = gfollow_buf_id;
         GWRITE_CODE_ID = gwrite_id;
         GWRITE_CONTENT_BUF_ID = gwrite_buf_id;
+        CDTSMOKE_ALPHA_CODE_ID = cdtsmoke_alpha_id;
+        CDTSMOKE_BETA_CODE_ID = cdtsmoke_beta_id;
+        CDTSMOKE_TARGET_ID = cdtsmoke_target_id;
+        CDTSMOKE_B_TASK_ID = cdtsmoke_b_task_id;
     }
     crate::println!(
         "[user] demo nodes ready: demo=#{} ({}B) bad=#{} ({}B) text=#{}",
@@ -3022,6 +3119,12 @@ pub fn init() {
         "[user] post-M34 native Rust: gwrite=#{} ({} B) gwrite-content-buf=#{}",
         gwrite_id, gwrite_bytes.len(),
         gwrite_buf_id,
+    );
+    crate::println!(
+        "[user] M35 cdtsmoke litmus: alpha=#{} ({} B) beta=#{} ({} B) target=#{} b-task=#{}",
+        cdtsmoke_alpha_id, cdtsmoke_alpha_bytes.len(),
+        cdtsmoke_beta_id, cdtsmoke_beta_bytes.len(),
+        cdtsmoke_target_id, cdtsmoke_b_task_id,
     );
 }
 
@@ -3073,3 +3176,19 @@ pub fn gwrite_code_id() -> u64 { unsafe { GWRITE_CODE_ID } }
 /// `spawn gwrite`. The shell rewrites its content per-spawn.
 #[allow(static_mut_refs)]
 pub fn gwrite_content_buf_id() -> u64 { unsafe { GWRITE_CONTENT_BUF_ID } }
+/// M35: node id of the compiled `cdtsmoke-alpha-user` Rust binary
+/// (delegate+revoke within A litmus).
+#[allow(static_mut_refs)]
+pub fn cdtsmoke_alpha_code_id() -> u64 { unsafe { CDTSMOKE_ALPHA_CODE_ID } }
+/// M35: node id of the compiled `cdtsmoke-beta-user` Rust binary
+/// (delegate+exit cascade litmus).
+#[allow(static_mut_refs)]
+pub fn cdtsmoke_beta_code_id() -> u64 { unsafe { CDTSMOKE_BETA_CODE_ID } }
+/// M35: node id of the long-lived `cdtsmoke-target` Text node used as
+/// the delegated target T by both litmus binaries.
+#[allow(static_mut_refs)]
+pub fn cdtsmoke_target_id() -> u64 { unsafe { CDTSMOKE_TARGET_ID } }
+/// M35: node id of the long-lived `cdtsmoke-b-task` System node used
+/// as the recipient task-node B by both litmus binaries.
+#[allow(static_mut_refs)]
+pub fn cdtsmoke_b_task_id() -> u64 { unsafe { CDTSMOKE_B_TASK_ID } }

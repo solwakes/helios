@@ -17,6 +17,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cdtsmoke-alpha-user"
+version = "0.1.0"
+dependencies = [
+ "helios-std",
+]
+
+[[package]]
+name = "cdtsmoke-beta-user"
+version = "0.1.0"
+dependencies = [
+ "helios-std",
+]
+
+[[package]]
 name = "gfollow-user"
 version = "0.1.0"
 dependencies = [

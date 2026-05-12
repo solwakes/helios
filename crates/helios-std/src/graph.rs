@@ -48,6 +48,10 @@ pub enum Label {
     /// `traverse` — no MMU mapping; grants `SYS_LIST_EDGES` /
     /// `SYS_FOLLOW_EDGE` on the target node.
     Traverse,
+    /// `grant` (M35) — no MMU mapping; authorises `SYS_DELEGATE_EDGE`
+    /// on the target node. Without `grant`, holding a cap does not
+    /// imply the right to redistribute it.
+    Grant,
     /// Any other edge kind the kernel reports. Includes structural
     /// edges like `child`/`parent` which aren't capability labels.
     Unknown(u8),
@@ -56,13 +60,15 @@ pub enum Label {
 impl Label {
     /// Decode the kind byte returned by `SYS_LIST_EDGES`.
     ///
-    /// ABI: 0 = unknown, 1 = read, 2 = write, 3 = exec, 4 = traverse.
+    /// ABI: 0 = unknown, 1 = read, 2 = write, 3 = exec, 4 = traverse,
+    /// 5 = grant.
     pub fn from_kind(kind: u8) -> Self {
         match kind {
             1 => Label::Read,
             2 => Label::Write,
             3 => Label::Exec,
             4 => Label::Traverse,
+            5 => Label::Grant,
             other => Label::Unknown(other),
         }
     }
@@ -74,6 +80,7 @@ impl Label {
             Label::Write => 2,
             Label::Exec => 3,
             Label::Traverse => 4,
+            Label::Grant => 5,
             Label::Unknown(b) => b,
         }
     }
@@ -86,6 +93,7 @@ impl Label {
             Label::Write => "write",
             Label::Exec => "exec",
             Label::Traverse => "traverse",
+            Label::Grant => "grant",
             Label::Unknown(_) => "?",
         }
     }
@@ -486,6 +494,60 @@ pub fn map_node_slice(size: usize) -> Result<&'static mut [u8], Errno> {
 }
 
 // ---------------------------------------------------------------------------
+// M35: SYS_DELEGATE_EDGE / SYS_REVOKE_EDGE — CDT-anchored cap flow.
+// ---------------------------------------------------------------------------
+
+/// Delegate one of the caller's outgoing edges onto another task. The
+/// caller must hold a live outgoing edge labelled `label` pointing at
+/// `target`, AND a live `grant` edge on `target`. On success a *derived*
+/// edge is added to `to_task`'s outgoing list with the same `label` and
+/// `target` — but its CDT parent points back to the caller's edge, so
+/// revoking the caller's edge cascades and removes this one too.
+///
+/// Returns the new edge's raw vec_position on the recipient task node.
+/// Callers that don't need this can discard it.
+///
+/// # Errors
+///
+/// - [`Errno::Perm`] — caller doesn't hold the source edge, OR doesn't
+///   hold `grant` on `target`.
+/// - [`Errno::NotFound`] — `to_task` or `target` missing from the graph.
+/// - [`Errno::Invalid`] — `label` is empty, longer than 64 bytes, or
+///   the kernel rejected the buffer.
+pub fn delegate_edge(target: NodeId, to_task: NodeId, label: &str) -> Result<usize, Errno> {
+    let r = unsafe {
+        sys::sys_delegate_edge(target.0, to_task.0, label.as_ptr(), label.len())
+    };
+    if r < 0 {
+        Err(Errno::from_raw(r))
+    } else {
+        Ok(r as usize)
+    }
+}
+
+/// Revoke the caller's outgoing edge `(label, target)`. The edge and
+/// every CDT descendant are tombstoned. For exec/read/write edges on
+/// the active task, the corresponding PT slots are unmapped and the
+/// TLB is flushed. Returns the count of tombstoned edges (>= 1).
+///
+/// # Errors
+///
+/// - [`Errno::NotFound`] — caller has no matching live outgoing edge.
+/// - [`Errno::Invalid`] — `label` is empty, longer than 64 bytes, or
+///   the kernel rejected the buffer (also: no active task, which
+///   shouldn't happen from U-mode).
+pub fn revoke_edge(target: NodeId, label: &str) -> Result<usize, Errno> {
+    let r = unsafe {
+        sys::sys_revoke_edge(target.0, label.as_ptr(), label.len())
+    };
+    if r < 0 {
+        Err(Errno::from_raw(r))
+    } else {
+        Ok(r as usize)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Host-side unit tests
 // ---------------------------------------------------------------------------
 //
@@ -530,7 +592,7 @@ mod tests {
         }
     }
 
-    /// Pin the four named cap-kinds to their kernel ABI bytes. If
+    /// Pin the five named cap-kinds to their kernel ABI bytes. If
     /// these constants ever drift, every user binary's `list_edges`
     /// output silently misclassifies. Catching it here is cheaper
     /// than chasing a bad demo run.
@@ -540,11 +602,13 @@ mod tests {
         assert_eq!(Label::from_kind(2), Label::Write);
         assert_eq!(Label::from_kind(3), Label::Exec);
         assert_eq!(Label::from_kind(4), Label::Traverse);
+        assert_eq!(Label::from_kind(5), Label::Grant);
 
         assert_eq!(Label::Read.as_kind(), 1);
         assert_eq!(Label::Write.as_kind(), 2);
         assert_eq!(Label::Exec.as_kind(), 3);
         assert_eq!(Label::Traverse.as_kind(), 4);
+        assert_eq!(Label::Grant.as_kind(), 5);
     }
 
     /// Kind 0 is documented as "unknown". Kernel structural edges
@@ -555,11 +619,11 @@ mod tests {
         assert_eq!(Label::from_kind(0), Label::Unknown(0));
     }
 
-    /// Bytes 5..=255 are reserved/unknown — they must not collapse
-    /// to the four named variants.
+    /// Bytes 6..=255 are reserved/unknown — they must not collapse
+    /// to the five named variants.
     #[test]
     fn label_unknown_byte_preserved() {
-        for kind in 5u8..=255 {
+        for kind in 6u8..=255 {
             match Label::from_kind(kind) {
                 Label::Unknown(b) => assert_eq!(b, kind),
                 other => panic!(
@@ -578,6 +642,7 @@ mod tests {
         assert_eq!(Label::Write.as_str(), "write");
         assert_eq!(Label::Exec.as_str(), "exec");
         assert_eq!(Label::Traverse.as_str(), "traverse");
+        assert_eq!(Label::Grant.as_str(), "grant");
         assert_eq!(Label::Unknown(0).as_str(), "?");
         assert_eq!(Label::Unknown(99).as_str(), "?");
     }
@@ -585,7 +650,13 @@ mod tests {
     /// Display impl matches `as_str` for the named kinds.
     #[test]
     fn label_display_matches_as_str() {
-        for l in [Label::Read, Label::Write, Label::Exec, Label::Traverse] {
+        for l in [
+            Label::Read,
+            Label::Write,
+            Label::Exec,
+            Label::Traverse,
+            Label::Grant,
+        ] {
             assert_eq!(format!("{}", l), l.as_str());
         }
         assert_eq!(format!("{}", Label::Unknown(7)), "?");
