@@ -1,0 +1,34 @@
+helios> spawn munmap
+helios> spawning post-M35 'munmap' — SYS_UNMAP_NODE allocation free (code #28)
+[user] task #38 mapped 4 regions, entry=0x40000000, satp=0x800000000008075d
+       exec : va=0x40000000 pa=0x80760000 node=28
+       exec : va=0x40001000 pa=0x80761000 node=28
+       exec : va=0x40002000 pa=0x80762000 node=28
+       stack: va=0x401ff000 pa=0x80763000 (R/W/U)
+munmap: exercising SYS_UNMAP_NODE (post-M35 Proposal B)
+  self id: #38
+[sys] SYS_MAP_NODE(size=32768, flags=0) -> node #39, va=0x40100000, 8 page(s)
+  A: filled+verified 32768 bytes at 0x40100000..0x40108000
+[sys] SYS_MAP_NODE(size=8192, flags=0) -> node #40, va=0x40108000, 2 page(s)
+  B: filled+verified 8192 bytes at 0x40108000..0x4010a000
+[sys] SYS_LIST_EDGES(src=38, buf_va=0x401ff910, max=32)
+  edges: A = #39, B = #40
+[sys] SYS_UNMAP_NODE(node_id=39) -- task #38
+[sys] unmapped node #39: 8 PT slot(s), 1 edge(s) tombstoned (cascade)
+  unmap_node(A=#39) OK
+[sys] SYS_LIST_EDGES(src=38, buf_va=0x401ff4f0, max=32)
+[sys] SYS_LIST_EDGES(src=38, buf_va=0x401ff4f0, max=32)
+  edge invariants after unmap(A): A gone, B present. OK.
+  B: write+verify after unmap(A) still works. PT survived.
+[sys] SYS_UNMAP_NODE: task #38 doesn't own node #39
+  unmap_node(A) twice: second call -> NotFound. OK.
+[sys] SYS_MAP_NODE(size=32768, flags=0) -> node #41, va=0x40100000, 8 page(s)
+  C: filled+verified 32768 bytes at 0x40100000 (= A's old base). SLOTS RECLAIMED.
+[sys] SYS_LIST_EDGES(src=38, buf_va=0x401ff4f0, max=32)
+[sys] SYS_LIST_EDGES(src=38, buf_va=0x401ff4f0, max=32)
+  final edges: A gone, B present, C present (own check via the live VA). OK.
+munmap: OK — SYS_UNMAP_NODE frees the allocation cleanly + slot is reusable.
+[user] task #38 SYS_EXIT(0)
+[user] task #38 exit: cascade-tombstoned 4 edge(s) via CDT
+[user] task #38 exited cleanly with code 0
+user task returned 0

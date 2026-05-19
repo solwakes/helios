@@ -75,3 +75,10 @@ version = "0.1.0"
 dependencies = [
  "helios-std",
 ]
+
+[[package]]
+name = "munmap-user"
+version = "0.1.0"
+dependencies = [
+ "helios-std",
+]

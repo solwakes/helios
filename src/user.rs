@@ -98,6 +98,19 @@ pub const SYS_DELEGATE_EDGE: usize = 10;
 /// {exec, read, write} the corresponding PT slots are unmapped and
 /// the TLB is flushed. Returns the count of tombstoned edges.
 pub const SYS_REVOKE_EDGE: usize = 11;
+// Post-M35 addition (Proposal B):
+/// Release one of the caller's own `SYS_MAP_NODE` allocations. Args:
+/// `(node_id)`. The caller must have allocated `node_id` via
+/// `SYS_MAP_NODE` — i.e. `node_id` must be in the task's
+/// `mem_node_ids`. The kernel zaps the PT slots backing the mapping,
+/// cascade-tombstones the task's `write` edge to `node_id` (so any
+/// onward delegations also lose access — though the M35 single-hart
+/// simplifications mean cross-task PT cleanup waits for the recipient
+/// task's next switch), removes the `Memory` graph node, and flushes
+/// the TLB. Backing frames stay resident — frame-level reclaim is
+/// still a future milestone, matching the M33 footprint note.
+/// Returns 0 on success.
+pub const SYS_UNMAP_NODE: usize = 12;
 
 // Negative error codes (two's complement of Linux-style errno).
 const EPERM: i64 = -1;
@@ -364,6 +377,23 @@ static BIGALLOC_USER_BIN: &[u8] = include_bytes!(concat!(
 /// Raw bytes of the `bigalloc-user` GlobalAlloc smoke-test program.
 pub fn bigalloc_program_bytes() -> &'static [u8] {
     BIGALLOC_USER_BIN
+}
+
+// ---------------------------------------------------------------------------
+// Post-M35 Proposal B: `munmap-user` — frees a SYS_MAP_NODE allocation
+// via the new SYS_UNMAP_NODE syscall, then verifies the data-window
+// slots are reusable. Mirror of the mmap-user embedding pattern.
+// See `crates/munmap-user/src/main.rs`.
+// ---------------------------------------------------------------------------
+
+static MUNMAP_USER_BIN: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/user-bins/munmap-user.bin",
+));
+
+/// Raw bytes of the `munmap-user` SYS_UNMAP_NODE demo program.
+pub fn munmap_program_bytes() -> &'static [u8] {
+    MUNMAP_USER_BIN
 }
 
 // ---------------------------------------------------------------------------
@@ -1902,6 +1932,11 @@ pub fn handle_syscall(frame: &mut TrapFrame) {
             let r = sys_revoke_edge(target_node_id, label_va, label_len);
             frame.set_a0(r as usize);
         }
+        SYS_UNMAP_NODE => {
+            let node_id = frame.a0() as u64;
+            let r = sys_unmap_node(node_id);
+            frame.set_a0(r as usize);
+        }
         _ => {
             crate::println!("[user] unknown syscall #{}", nr);
             frame.set_a0(EINVAL as usize);
@@ -2845,6 +2880,148 @@ fn sys_revoke_edge(target_node_id: u64, label_va: usize, label_len: usize) -> i6
 }
 
 // ---------------------------------------------------------------------------
+// Post-M35 (Proposal B): SYS_UNMAP_NODE — release one of the caller's
+// own `SYS_MAP_NODE` allocations.
+//
+// args:
+//   a0 = node_id of a `NodeType::Memory` the caller minted via
+//        SYS_MAP_NODE
+//
+// cap check:
+//   - `node_id ∈ active.mem_node_ids`. The task already self-granted
+//     `write` to this node at allocation time, so no new label is
+//     introduced; instead the check is "did you allocate it?" — which
+//     matches the anonymous-`munmap` shape on Unix. Memory nodes the
+//     task only *has a delegated edge to* (Proposal C territory) won't
+//     be in `mem_node_ids` and therefore can't be unmapped via this
+//     syscall.
+//
+// action:
+//   1. Walk `active.mappings`, zap each L0 PTE whose `node_id` matches
+//      and whose `kind` is exec/read/write, and drop those Mapping
+//      entries. (For Memory nodes the only mapping kind is `write`,
+//      but the loop is uniform with `unmap_active_target_pages`.)
+//   2. Find the live "write" edge from the active task to `node_id`
+//      and `cascade_tombstone` it. This kills any onward delegations
+//      via the M35 CDT walk. PT cleanup on the active task already
+//      happened in step (1), so the cascade is for the *delegate*
+//      recipients (whose PTs will be cleaned up on their next switch
+//      — the M35 single-hart simplification, unchanged here).
+//   3. `g.remove_node(node_id)` drops the now-tombstoned mem node from
+//      the graph entirely. The backing frames stay resident — frame-
+//      level reclaim is still a future milestone (matches the M33
+//      footprint note).
+//   4. Remove `node_id` from `active.mem_node_ids` so a future
+//      `SYS_UNMAP_NODE` on the same id returns ENOENT.
+//   5. Rebuild the active task's cap-cache vectors from the now-pruned
+//      live edges (the `write_allowed` / `read_allowed` entries for
+//      `node_id` need to drop).
+//   6. One `sfence.vma` at the end.
+//
+// returns:
+//   0 on success, or:
+//   - ENOENT (-2) — no active task OR `node_id` not in mem_node_ids.
+//     Two failure cases collapse into one because from U-mode there
+//     is no other shape that should trigger them in practice.
+// ---------------------------------------------------------------------------
+
+fn sys_unmap_node(node_id: u64) -> i64 {
+    let task_id = match active() {
+        Some(a) => a.task_node_id,
+        None => return ENOENT,
+    };
+
+    // Ownership check: node_id must be in the active task's
+    // mem_node_ids. This catches:
+    //   - bogus / never-allocated ids,
+    //   - ids the task only has a delegated `write` to (not its own
+    //     `SYS_MAP_NODE` allocation).
+    let owned = match active() {
+        Some(a) => a.mem_node_ids.iter().any(|&n| n == node_id),
+        None => false,
+    };
+    if !owned {
+        crate::println!(
+            "[sys] SYS_UNMAP_NODE: task #{} doesn't own node #{}",
+            task_id, node_id,
+        );
+        return ENOENT;
+    }
+
+    crate::println!(
+        "[sys] SYS_UNMAP_NODE(node_id={}) -- task #{}",
+        node_id, task_id,
+    );
+
+    // Step 1: zap the PT slots for the mapping. This mutates `active.
+    // mappings` in place, removing entries whose target is `node_id`.
+    let pt_unmapped = unmap_active_target_pages(node_id);
+
+    // Step 2: find the task's `write` edge to node_id and cascade-
+    // tombstone it. Any delegates lose their cap (and on their next
+    // switch, their PT slot is rebuilt — single-hart simplification).
+    // We split the lookup from the mutation so the immutable graph
+    // borrow ends before we ask for a mutable one (same pattern
+    // `sys_revoke_edge` uses).
+    let root_edge = {
+        let g = graph::get();
+        let task = match g.get_node(task_id) {
+            Some(t) => t,
+            None => return ENOENT,
+        };
+        let mut found = None;
+        for (id, e) in task.live_edges() {
+            if e.label == "write" && e.target == node_id {
+                found = Some(id);
+                break;
+            }
+        }
+        found
+    };
+    let cascaded = match root_edge {
+        Some(rid) => {
+            let g = graph::get_mut();
+            g.cascade_tombstone(rid)
+        }
+        // No live `write` edge to the mem node is unusual but not
+        // fatal — it can happen if the task already revoked its own
+        // edge via SYS_REVOKE_EDGE without unmapping. We still want to
+        // proceed and free the node since the ownership check passed.
+        None => Vec::new(),
+    };
+
+    // Step 3: drop the Memory node from the graph. The kernel's
+    // `remove_node` is what `run_user_task_inner`'s exit path uses for
+    // SYS_MAP_NODE leak cleanup; reuse it here for the same shape.
+    {
+        let g = graph::get_mut();
+        g.remove_node(node_id);
+    }
+
+    // Step 4: prune mem_node_ids so a repeat call returns ENOENT.
+    if let Some(a) = active_mut() {
+        a.mem_node_ids.retain(|&n| n != node_id);
+    }
+
+    // Step 5: rebuild cap caches now that the live edge set has
+    // shrunk by one (and any descendant-on-this-task edges are
+    // tombstoned). `rebuild_active_cap_caches` walks
+    // `task.iter_live()`, so it naturally skips tombstoned entries.
+    rebuild_active_cap_caches();
+
+    // Step 6: TLB flush. Conservative but matches M35's "flush
+    // everything on cap change" policy — ASIDs would be a future
+    // profiling win.
+    unsafe { core::arch::asm!("sfence.vma zero, zero"); }
+
+    crate::println!(
+        "[sys] unmapped node #{}: {} PT slot(s), {} edge(s) tombstoned (cascade)",
+        node_id, pt_unmapped, cascaded.len(),
+    );
+    0
+}
+
+// ---------------------------------------------------------------------------
 // Boot-time demo graph setup
 // ---------------------------------------------------------------------------
 
@@ -2867,6 +3044,8 @@ static mut CAT_CODE_ID: u64 = 0;
 static mut MMAP_CODE_ID: u64 = 0;
 /// M33.5: node id of the `bigalloc` demo (GlobalAlloc via SYS_MAP_NODE).
 static mut BIGALLOC_CODE_ID: u64 = 0;
+/// Post-M35 (Proposal B): node id of the `munmap` demo (SYS_UNMAP_NODE).
+static mut MUNMAP_CODE_ID: u64 = 0;
 /// Post-M34: node id of the `gtree` recursive graph walker.
 static mut GTREE_CODE_ID: u64 = 0;
 /// Post-M34: node id of the `gfollow` single-step edge-follow program.
@@ -2986,6 +3165,12 @@ pub fn init() {
     if let Some(n) = g.get_node_mut(bigalloc_id) { n.content = bigalloc_bytes.to_vec(); }
     g.add_edge(1, "child", bigalloc_id);
 
+    // Post-M35 (Proposal B): SYS_UNMAP_NODE demo program.
+    let munmap_bytes = munmap_program_bytes();
+    let munmap_id = g.create_node(NodeType::Binary, "munmap-user-code");
+    if let Some(n) = g.get_node_mut(munmap_id) { n.content = munmap_bytes.to_vec(); }
+    g.add_edge(1, "child", munmap_id);
+
     // Post-M34: recursive graph walker.
     let gtree_bytes = gtree_program_bytes();
     let gtree_id = g.create_node(NodeType::Binary, "gtree-user-code");
@@ -3074,6 +3259,7 @@ pub fn init() {
         CAT_CODE_ID = cat_id;
         MMAP_CODE_ID = mmap_id;
         BIGALLOC_CODE_ID = bigalloc_id;
+        MUNMAP_CODE_ID = munmap_id;
         GTREE_CODE_ID = gtree_id;
         GFOLLOW_CODE_ID = gfollow_id;
         GFOLLOW_LABEL_BUF_ID = gfollow_buf_id;
@@ -3108,6 +3294,10 @@ pub fn init() {
     crate::println!(
         "[user] M33.5 native Rust: bigalloc=#{} ({} B)",
         bigalloc_id, bigalloc_bytes.len(),
+    );
+    crate::println!(
+        "[user] post-M35 native Rust: munmap=#{} ({} B)",
+        munmap_id, munmap_bytes.len(),
     );
     crate::println!(
         "[user] post-M34 native Rust: gtree=#{} ({} B) gfollow=#{} ({} B) gfollow-label-buf=#{}",
@@ -3159,6 +3349,9 @@ pub fn mmap_code_id() -> u64 { unsafe { MMAP_CODE_ID } }
 /// Node id of the compiled `bigalloc-user` Rust binary (M33.5).
 #[allow(static_mut_refs)]
 pub fn bigalloc_code_id() -> u64 { unsafe { BIGALLOC_CODE_ID } }
+/// Node id of the compiled `munmap-user` Rust binary (post-M35 Proposal B).
+#[allow(static_mut_refs)]
+pub fn munmap_code_id() -> u64 { unsafe { MUNMAP_CODE_ID } }
 /// Node id of the compiled `gtree-user` Rust binary (post-M34).
 #[allow(static_mut_refs)]
 pub fn gtree_code_id() -> u64 { unsafe { GTREE_CODE_ID } }

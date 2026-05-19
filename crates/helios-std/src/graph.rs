@@ -454,13 +454,12 @@ pub fn read_edge_label_into(
 ///
 /// # Safety note
 ///
-/// The returned pointer is valid for the lifetime of the current task
-/// — the mapped region dies when the task exits (the kernel removes
-/// the `Memory` node, frees the task→mem edge, and frees the page
-/// tables). There is no [`unmap_node`] in M33; per-allocation free is
-/// a future milestone.
-///
-/// [`unmap_node`]: # "planned SYS_UNMAP_NODE, not yet shipped"
+/// The returned pointer is valid until either (a) the task exits — at
+/// which point the kernel removes the `Memory` node, frees the
+/// task→mem edge, and frees the page tables — or (b) the caller frees
+/// the region explicitly via [`unmap_node`]. After [`unmap_node`] the
+/// returned pointer is dangling and any access will trap; the caller
+/// must not retain references into it.
 pub fn map_node(size: usize) -> Result<core::ptr::NonNull<u8>, Errno> {
     let r = unsafe { sys::sys_map_node(size, 0) };
     if r < 0 {
@@ -544,6 +543,51 @@ pub fn revoke_edge(target: NodeId, label: &str) -> Result<usize, Errno> {
         Err(Errno::from_raw(r))
     } else {
         Ok(r as usize)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Post-M35 (Proposal B): SYS_UNMAP_NODE — release a `SYS_MAP_NODE`
+// allocation before task exit.
+// ---------------------------------------------------------------------------
+
+/// Release one of the caller's [`map_node`]-allocated memory regions.
+/// The caller passes the `NodeId` returned (implicitly — via the
+/// task's outgoing-edge list; see notes below) by an earlier
+/// allocation. The kernel zaps the PT mappings, cascade-tombstones
+/// the task's `write` edge to the node so any delegations also lose
+/// access, removes the Memory node from the graph, and flushes the
+/// TLB. Backing frames stay resident — per-frame reclaim is a future
+/// milestone, matching the M33 footprint note.
+///
+/// # Finding the NodeId
+///
+/// [`map_node`] currently returns a raw user VA, not a [`NodeId`], so
+/// callers that need to free a specific allocation will typically
+/// enumerate the task's outgoing edges via [`list_edges`] and pick
+/// the `Memory` target whose recorded VA matches the pointer they
+/// want to free. Future revisions may return the `NodeId` directly
+/// from `map_node`; for now this asymmetry is the M33 ABI.
+///
+/// # Errors
+///
+/// - [`Errno::NotFound`] — `node` is not in the caller's allocated
+///   set (never minted by this task via [`map_node`]; already freed;
+///   or the caller only has a delegated edge to it).
+///
+/// # Safety
+///
+/// After this call returns, every pointer the caller previously
+/// obtained from [`map_node`] for `node` is dangling. The MMU
+/// mapping is gone; loads/stores will trap. The caller is
+/// responsible for ensuring no live `&` / `&mut` references into the
+/// region exist before invoking `unmap_node`.
+pub fn unmap_node(node: NodeId) -> Result<(), Errno> {
+    let r = unsafe { sys::sys_unmap_node(node.0) };
+    if r < 0 {
+        Err(Errno::from_raw(r))
+    } else {
+        Ok(())
     }
 }
 

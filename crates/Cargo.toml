@@ -13,6 +13,7 @@
 #   - cat-user   : graph-native `cat` — print a node's content as text (M32).
 #   - mmap-user  : dynamic memory via SYS_MAP_NODE (M33).
 #   - bigalloc-user : GlobalAlloc-via-SYS_MAP_NODE smoke test (M33.5).
+#   - munmap-user : free a SYS_MAP_NODE allocation (post-M35 Proposal B).
 #   - gtree-user : recursive `tree`-style graph walker (post-M34 utility).
 #   - gfollow-user : single-step labelled-edge follow (post-M34 utility).
 #   - gwrite-user : node-content overwrite (post-M34 utility).
@@ -28,6 +29,7 @@ members = [
     "cat-user",
     "mmap-user",
     "bigalloc-user",
+    "munmap-user",
     "gtree-user",
     "gfollow-user",
     "gwrite-user",

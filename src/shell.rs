@@ -1529,6 +1529,27 @@ fn cmd_spawn(name: &str, arg: &str, arg2: &str) {
         crate::println!("user task returned {}", rc);
         return;
     }
+    // Post-M35 (Proposal B): SYS_UNMAP_NODE demo. Same shape as
+    // bigalloc — the task needs the self-traverse cap so it can
+    // enumerate its outgoing edges, find each Memory node it minted,
+    // and pass those NodeIds to `unmap_node`. No pre-granted read /
+    // write edges: every Memory node the demo touches it allocates
+    // itself, so any `write` edge on the task is guaranteed to be one
+    // of the demo's own allocations.
+    if name == "munmap" || name == "munmap-user" {
+        let code_id = crate::user::munmap_code_id();
+        if code_id == 0 {
+            crate::println!("munmap-user-code not initialized");
+            return;
+        }
+        crate::println!(
+            "helios> spawning post-M35 'munmap' — SYS_UNMAP_NODE allocation free (code #{})",
+            code_id,
+        );
+        let rc = crate::user::run_user_task_with_caps(code_id, &[], true, 0, 0);
+        crate::println!("user task returned {}", rc);
+        return;
+    }
     // Post-M34: recursive `tree`-style graph walker.
     //
     // `spawn gtree [id] [depth]` walks `child` edges from `<id>` (default

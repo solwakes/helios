@@ -49,6 +49,13 @@ pub const SYS_DELEGATE_EDGE: usize = 10;
 /// descendant. Cascades transitively. For exec/read/write edges on the
 /// active task, the corresponding PT slots are unmapped + TLB flushed.
 pub const SYS_REVOKE_EDGE: usize = 11;
+/// Post-M35 (Proposal B): release a `SYS_MAP_NODE` allocation. The
+/// caller passes the `node_id` of a Memory node it allocated itself;
+/// the kernel zaps the PT mappings, cascade-tombstones the task's
+/// `write` edge to the node, drops the node from the graph, and
+/// flushes the TLB. Backing frames stay resident — per-frame reclaim
+/// is a future milestone (matches the M33 footprint note).
+pub const SYS_UNMAP_NODE: usize = 12;
 
 // ---------------------------------------------------------------------------
 // Errno values returned by syscalls (matching the kernel's constants)
@@ -305,6 +312,24 @@ pub unsafe fn sys_revoke_edge(
     )
 }
 
+/// `SYS_UNMAP_NODE(node_id)` — release one of the caller's
+/// `SYS_MAP_NODE` allocations. The kernel zaps the page-table mappings,
+/// cascade-tombstones the task's `write` edge to the node (so any
+/// delegations lose access too), and removes the Memory node from the
+/// graph. Backing frames stay resident — frame-level reclaim is a
+/// future milestone.
+///
+/// Returns 0 on success, or:
+///
+/// - `ENOENT` — `node_id` is not in the caller's allocated set, OR no
+///   active task (which shouldn't happen from U-mode).
+///
+/// See [`crate::graph::unmap_node`] for the typed wrapper.
+#[inline(always)]
+pub unsafe fn sys_unmap_node(node_id: u64) -> isize {
+    syscall1(SYS_UNMAP_NODE, node_id as usize)
+}
+
 // ---------------------------------------------------------------------------
 // Host-side unit tests for syscall numbers + errno constants.
 // ---------------------------------------------------------------------------
@@ -318,9 +343,9 @@ pub unsafe fn sys_revoke_edge(
 mod tests {
     use super::*;
 
-    /// Pin the 11 syscall numbers (M30 through M35) to their kernel
-    /// ABI values. If the kernel renumbers, this test fails before the
-    /// next QEMU run does.
+    /// Pin the 12 syscall numbers (M30 through post-M35 Proposal B) to
+    /// their kernel ABI values. If the kernel renumbers, this test
+    /// fails before the next QEMU run does.
     #[test]
     fn syscall_numbers_match_kernel_abi() {
         assert_eq!(SYS_READ_NODE, 1);
@@ -334,6 +359,7 @@ mod tests {
         assert_eq!(SYS_READ_EDGE_LABEL, 9);
         assert_eq!(SYS_DELEGATE_EDGE, 10);
         assert_eq!(SYS_REVOKE_EDGE, 11);
+        assert_eq!(SYS_UNMAP_NODE, 12);
     }
 
     /// Errno constants are negative single-digit values; pin them to

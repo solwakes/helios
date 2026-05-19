@@ -217,6 +217,8 @@ Plan 9's namespaces don't enforce; the file server does. Helios edges are enforc
 - **M33.5** (done, pure user-space): helios-std's `GlobalAlloc` now back-ends on `SYS_MAP_NODE` instead of a 64 KiB in-binary bump arena. Slab-chained bump allocator; first `alloc` call installs a 16 KiB slab via `graph::map_node`; oversized requests install a slab sized to fit. Each slab appears as a `write` edge from the task to a `NodeType::Memory` node; kernel cleanup at task exit reclaims everything. No kernel changes — all user-space. Demo at `crates/bigalloc-user/` (`spawn bigalloc`) allocates a 16 KiB `Vec<u64>`, then a 32 KiB `Vec<u64>` to force slab chaining, and inspects `list_edges(self)` to verify multiple memory edges exist.
 - **M34** (done): `SYS_READ_EDGE_LABEL` — read a single outgoing edge's full UTF-8 label by index. Closes the "everything shows as `?`" gap: `SYS_LIST_EDGES` keeps its compact 16-byte entries with a cap-kind byte, and user code issues one follow-up syscall per structural edge it wants the actual label for. Shipped as append-only (ABI not broken); `spawn ls 1` now prints `child` for all 19 root outgoing edges instead of `?`. See "M34 Implementation Notes" below.
 - **M35** (done): Cap delegation + CDT for revocation. Three phases: graph-layer tombstones + `derived_from` lineage (phase 1, commit `834d23c`); `SYS_DELEGATE_EDGE` / `SYS_REVOKE_EDGE` + fifth `grant` cap label + active-task cap-cache + PT invalidation + task-exit cascade (phase 2, commit `5591534`); `cdtsmoke-alpha` / `cdtsmoke-beta` litmus binaries (phase 3, commit `c808003`). Authority is now first-class user-space-mutable. See "M35 Implementation Notes" below.
+
+- **Post-M35 Proposal B** (done): `SYS_UNMAP_NODE` — release a `SYS_MAP_NODE` allocation before task exit. Cap-gated on ownership (`node_id` must be in the calling task's `mem_node_ids`, i.e. self-allocated, not delegated-in). Symmetric to `SYS_MAP_NODE`: zaps PT mappings, cascade-tombstones the task's `write` edge to the node (so any onward delegations also lose access), removes the `Memory` graph node, and flushes the TLB. Backing frames stay resident — frame-level reclaim is still a future milestone, matching the M33 footprint note. Demo at `crates/munmap-user/` (`spawn munmap`). Closes one of three gaps the post-M35 directions doc identified; the other two (multi-task scheduler M36, shared-memory IPC) remain. See "Post-M35 Implementation Notes" below.
 - **M36**: Multiple user tasks coexisting. The cross-task cascade-during-run path that M35 phase 2 punted to "post-SMP" lives here.
 - **M37**: Port DOOM to user mode (the litmus test — does the cap model handle a big, real program?).
 
@@ -589,14 +591,15 @@ Things the CDT shipping learned, worth preserving:
 
 12. **Non-goals deliberately deferred.** Several CDT-adjacent
     features were explicitly out of M35: per-allocation free of
-    memory nodes (still task-exit-only); `SYS_UNMAP_NODE`; map_node
-    delegation (the syscall self-grants `write` but does *not*
-    self-grant `grant`, so a task can't onward-delegate its
-    anonymous memory without an explicit grant edge); shared-memory
-    IPC primitives. CDT enables these; M35 doesn't ship one. The
-    grant-policy note (`knowledge/notes/cdt-grant-policy.md`)
-    captured the per-target-only-during-spawn decision so the
-    auto-grant-on-map_node option (b) stays separable.
+    memory nodes (still task-exit-only as of M35; *closed* by
+    post-M35 Proposal B — see below); map_node delegation (the
+    syscall self-grants `write` but does *not* self-grant `grant`,
+    so a task can't onward-delegate its anonymous memory without an
+    explicit grant edge); shared-memory IPC primitives. CDT enables
+    these; M35 doesn't ship one. The grant-policy note
+    (`knowledge/notes/cdt-grant-policy.md`) captured the per-target-
+    only-during-spawn decision so the auto-grant-on-map_node option
+    (b) stays separable.
 
 13. **Litmus from QEMU, no host-side graph tests yet.** The kernel
     is `no_std` and the project doesn't currently support `cargo
@@ -609,6 +612,68 @@ Things the CDT shipping learned, worth preserving:
     blocking — the binaries are the integration test M35 was
     always going to need.
 
+## Post-M35 Implementation Notes (Proposal B — `SYS_UNMAP_NODE`)
+
+Proposal B of `docs/design/proposals/post-m35-directions.md` shipped
+as a single small piece of M35 vocabulary, after the M35 closeout
+landed on 2026-05-12. See that proposal for the gap-surface
+discussion this implementation resolves.
+
+1. **Cap-gate is ownership, not a new label.** `SYS_UNMAP_NODE`
+   gates on `node_id ∈ active.mem_node_ids` (i.e. allocated-by-self
+   via `SYS_MAP_NODE`), not on a new `destroy` cap label. This
+   matches the Unix anonymous-`munmap` shape: a task can free its
+   own allocations, not the allocations of others. Importantly, a
+   task that *only has a delegated `write` edge* to a Memory node
+   does **not** appear in its own `mem_node_ids` — Proposal B is a
+   per-allocation free, not a graph-node destroy.
+
+2. **Reuses M35 plumbing.** The implementation calls
+   `unmap_active_target_pages` (the helper M35 added for
+   `SYS_REVOKE_EDGE`'s PT cleanup) and `g.cascade_tombstone` (the
+   M35 CDT walk). The net effect is symmetric with `SYS_REVOKE_EDGE`
+   in cap terms but with one extra step at the end: `g.remove_node`
+   on the Memory node so the freed slot doesn't leak as a
+   tombstoned-edge-pointing-at-a-still-extant-node ghost.
+
+3. **Backing frames stay resident.** The M33 footprint note is
+   unchanged. Frame-level reclaim depends on a global free pool
+   that doesn't exist yet — that's a separate milestone (M37+ class
+   of work). The slot in the task's data-VA window *is* released
+   and reusable by subsequent `SYS_MAP_NODE` calls; the demo's
+   final step verifies the reused VA equals the freed VA.
+
+4. **Cross-task PT cleanup on delegation cascade is single-hart-
+   simplified.** If task A unmaps a node that A had delegated
+   `write` on to task B, the cascade tombstones B's edge — but B's
+   PT mapping is not zapped during the cascade because B isn't the
+   current SATP. This is the same M35 simplification described in
+   M35 Implementation Notes #9, and lifts the same way once M36
+   (multi-task scheduler) lands. Until then, task B's stale PT
+   mapping is harmless: B's *cap-cache* doesn't include the freed
+   node anymore, so any syscall-mediated access from B will EPERM;
+   raw MMU loads from B would read from frames whose contents are
+   no longer guaranteed (the node is gone, the frames may get
+   handed to a future allocation), but that's the same hazard B
+   faces today on any revoke from a non-active source. The fix
+   ships with M36's lift of these simplifications, not with B.
+
+5. **Errno shape.** `SYS_UNMAP_NODE` returns `0` on success or
+   `ENOENT` on failure. Failure is collapsed into one code because
+   the two distinguishable cases (no active task; `node_id` not in
+   `mem_node_ids`) can't both happen from U-mode in practice — a
+   U-mode syscall has an active task by definition.
+
+6. **Demo (`spawn munmap`).** `crates/munmap-user` allocates A (32
+   KiB) and B (8 KiB), reads its own outgoing edges to find their
+   `NodeId`s, frees A, verifies that B's edge survives and B's
+   mapping still works, verifies a repeat free of A returns
+   `NotFound`, and reallocates 32 KiB (C) — verifying C's base VA
+   equals A's old base. That last step is the load-bearing slot-
+   reclaim assertion: without it the demo would prove only that
+   the syscall runs without faulting, not that it actually returns
+   the slot to the bitmap.
+
 ---
 
-*Last reviewed: 2026-05-12 (post-M35 — CDT shipped; Proposal C from `post-m32-directions.md` is fully closed). Next review when something material in the cap model changes — likely M36 (multi-task scheduler) or whenever shared-memory IPC lands.*
+*Last reviewed: 2026-05-19 (post-M35 Proposal B shipped — `SYS_UNMAP_NODE` closes the per-allocation-free gap; M36 multi-task scheduler and Proposal C shared-memory IPC remain on the post-M35 directions list). Next review when M36 or material new cap-model work lands.*

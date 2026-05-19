@@ -1,11 +1,17 @@
 # Post-M35 Directions
 
-*Status: proposal, not a decision. Written 2026-05-18 after M35 (CDT
-+ delegation) shipped on 2026-05-10/11/12 and the closeout doc landed
-on 2026-05-12 (`docs/design/capability-edges.md` "M35 Implementation
-Notes"). The previous proposal doc (`post-m32-directions.md`) has
-been fully consumed — proposals A/B/C shipped as M33/M34/M35. This
-is its successor.*
+*Status: proposal, partially shipped. Written 2026-05-18 after M35
+(CDT + delegation) shipped on 2026-05-10/11/12 and the closeout doc
+landed on 2026-05-12 (`docs/design/capability-edges.md` "M35
+Implementation Notes"). The previous proposal doc
+(`post-m32-directions.md`) has been fully consumed — proposals
+A/B/C shipped as M33/M34/M35. This is its successor.*
+
+*Proposal B (`SYS_UNMAP_NODE`) shipped 2026-05-19. See the "Post-M35
+Implementation Notes" section in `docs/design/capability-edges.md`
+and the UART transcript at `screenshots/post-m35-munmap-uart.txt`.
+Proposals A (multi-task scheduler M36) and C (shared-memory IPC)
+remain open.*
 
 ## Context
 
@@ -227,7 +233,7 @@ preemption + register save/restore, (3) lift the three M35
 simplifications + litmus binaries. Each phase shippable
 independently if needed.
 
-### Proposal B: `SYS_UNMAP_NODE`
+### Proposal B: `SYS_UNMAP_NODE` *(shipped 2026-05-19)*
 
 Symmetric to `SYS_MAP_NODE`. Takes a `node_id`, validates it's in
 the calling task's `mem_node_ids`, walks the task's `mappings` for
@@ -246,14 +252,22 @@ pool (there is no global free pool yet). That's a separate
 milestone (frame-level allocator); the syscall lands without it
 and benefits the moment it lands.
 
-**ABI:**
+**ABI (as shipped):**
 ```
-SYS_UNMAP_NODE = 9   (next free number after M35's 7/8 SYS_DELEGATE/REVOKE)
+SYS_UNMAP_NODE = 12  (M35's SYS_DELEGATE/REVOKE took 10/11; this is the next free slot)
 Args:    a0 = node_id (u64)
-Returns: a0 = 0 on success
-                ENOMEM (-12) if node_id not in mem_node_ids
-                EPERM  (-1)  if some other validation fails
+Returns: a0 = 0       on success
+                ENOENT (-2)  if node_id not in caller's mem_node_ids
+                             (covers both "never allocated" and
+                             "already freed"). The two distinguishable
+                             failure cases collapse into one because a
+                             U-mode syscall has an active task by
+                             definition.
 ```
+
+(The initial proposal sketch had `SYS_UNMAP_NODE = 9` and Linux-style
+ENOMEM=-12; both were drafting errors. The shipped numbers match the
+existing kernel-side errno constants and the post-M35 ABI cursor.)
 
 **Demo:** `crates/munmap-user/` — allocates two regions, frees the
 first, verifies via `list_edges(self)` that one Memory-edge
@@ -338,11 +352,15 @@ listing but don't merit their own proposal:
 
 ## Recommendation
 
-**Order: B → A → C.**
+**Order: B → A → C.** (B shipped 2026-05-19. A and C remain.)
 
 `SYS_UNMAP_NODE` (Proposal B) first. It's a clean, well-bounded
 win, removes a real M33 limitation, and is the smallest piece of
 M35 vocabulary I haven't exercised. Approximately one session.
+*Result: shipped in one session as expected; ~120 LOC of kernel
+work + ~290 LOC of demo + helios-std wrappers + docs. See
+`screenshots/post-m35-munmap-uart.txt` for the end-to-end UART
+transcript.*
 
 Then M36 (Proposal A). The big one. Three phases over multiple
 sessions, mirroring M35's shape:

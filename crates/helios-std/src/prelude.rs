@@ -33,8 +33,8 @@
 
 pub use crate::graph::{
     delegate_edge, follow_edge, list_edges, list_edges_into, map_node, map_node_slice,
-    read_edge_label, read_edge_label_into, read_node, revoke_edge, write_node, Edge, EdgeInfo,
-    Errno, Label, LabelKind, NodeId,
+    read_edge_label, read_edge_label_into, read_node, revoke_edge, unmap_node, write_node, Edge,
+    EdgeInfo, Errno, Label, LabelKind, NodeId,
 };
 pub use crate::io::Stdout;
 pub use crate::task::{args, exit, self_id};

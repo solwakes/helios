@@ -1,0 +1,13 @@
+[package]
+name = "munmap-user"
+version = "0.1.0"
+edition = "2021"
+description = "SYS_UNMAP_NODE demo — free a SYS_MAP_NODE allocation (post-M35 Proposal B)"
+build = "build.rs"
+
+[[bin]]
+name = "munmap-user"
+path = "src/main.rs"
+
+[dependencies]
+helios-std = { path = "../helios-std" }
