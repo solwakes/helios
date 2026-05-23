@@ -1,0 +1,250 @@
+ | |_| |/ _ \ | |/ _ \/ __|
+ |  _  |  __/ | | (_) \__ \
+ |_| |_|\___|_|_|\___/|___/
+
+  Everything is a memory.
+========================================
+
+[boot] Hart 0 reporting for duty
+[boot] Helios v0.1.0
+[mm] Setting up Sv39 page tables...
+[mm] Identity mapping MMIO: 0x0..0x40000000 (1 GiB gigapage, RW)
+[mm] Identity mapping RAM: 0x80000000..0x88000000 (64 x 2 MiB megapages, RWX)
+[mm] Enabling Sv39 paging (satp = 0x8000000000080730)
+[mm] Paging enabled successfully.
+[graph] Initialized: 9 nodes, 8 edges
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[blk] Found block device @ 0x10008000 (version 2)
+[virtio] Queue 0: max=1024, using=16
+[blk] Device ready, queue size=16
+[blk] VirtIO block device initialized
+[graph] Loaded saved graph from disk: 9 nodes, 7 edges
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[tablet] No VirtIO tablet found
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[virtio] MMIO slot 7 @ 0x10008000: version=2, device_id=2
+[input] No VirtIO keyboard found
+[virtio] MMIO slot 0 @ 0x10001000: version=2, device_id=0
+[virtio] MMIO slot 1 @ 0x10002000: version=2, device_id=0
+[virtio] MMIO slot 2 @ 0x10003000: version=2, device_id=0
+[virtio] MMIO slot 3 @ 0x10004000: version=2, device_id=0
+[virtio] MMIO slot 4 @ 0x10005000: version=2, device_id=0
+[virtio] MMIO slot 5 @ 0x10006000: version=2, device_id=0
+[virtio] MMIO slot 6 @ 0x10007000: version=2, device_id=1
+[net] Found net device @ 0x10007000 (version 2)
+[virtio] Device features: lo=0x30bf8024 hi=0x00000101
+[virtio] Queue 0: max=1024, using=16
+[virtio] Queue 1: max=1024, using=16
+[net] Device ready, rxq size=16, txq size=16, bufs=16/16
+[net] VirtIO net initialized, MAC=52:54:00:12:34:56
+[fb] Initialising ramfb framebuffer...
+[ramfb] fw_cfg device verified (QEMU signature OK)
+[ramfb] etc/ramfb not found — is -device ramfb enabled?
+[fb] No ramfb available — UART only
+[trap] Trap handler installed at 0x80277230
+[trap] Timer interrupts enabled (interval: 100ms), SUM enabled
+
+[boot] Helios kernel initialized successfully.
+
+[ipc] IPC subsystem initialized (channels under node #11)
+[user] /user subgraph ready (node #12)
+[task] Preemptive multitasking initialized (task #0 = shell)
+[user] demo nodes ready: demo=#15 (64B) bad=#16 (32B) text=#17
+[user] M30 demos: who=#18 (208B) explorer=#19 (352B) editor=#20 (512B) naughty=#21 (288B) scratch=#22
+[user] M31 native Rust: hello=#23 (7032 B)
+[user] M32 native Rust: ls=#24 (9208 B) cat=#25 (6648 B)
+[user] M33 native Rust: mmap=#26 (4937 B)
+[user] M33.5 native Rust: bigalloc=#27 (11576 B)
+[user] post-M35 native Rust: munmap=#28 (8943 B)
+[user] post-M34 native Rust: gtree=#29 (9688 B) gfollow=#30 (6536 B) gfollow-label-buf=#31
+[user] post-M34 native Rust: gwrite=#32 (5800 B) gwrite-content-buf=#33
+[user] M35 cdtsmoke litmus: alpha=#34 (8056 B) beta=#35 (7416 B) target=#36 b-task=#37
+helios> spawn userdemo
+helios> spawning M29 user-space demo (code #15, read #17, forbidden #1)
+[user] task #38 mapped 3 regions, entry=0x40000000, satp=0x800000000008075e
+       exec : va=0x40000000 pa=0x80761000 node=15
+       read : va=0x40100000 pa=0x80762000 node=17
+       stack: va=0x401ff000 pa=0x80763000 (R/W/U)
+[sys] SYS_READ_NODE(node=17, buf_va=0x401fff80, len=128)
+Hello from Helios U-mode! Edges are capabilities.
+[sys] SYS_READ_NODE(node=1, buf_va=0x401fff80, len=128)
+[user] capability violation: task #38 tried to read node 1 (no edge)
+[user] task #38 SYS_EXIT(0)
+[user] task #38 exit: cascade-tombstoned 2 edge(s) via CDT
+[user] task #38 exited cleanly with code 0
+user task returned 0
+helios> spawn editor
+helios> spawning M30 'editor' demo (read+write on scratch #22)
+[user] task #39 mapped 4 regions, entry=0x40000000, satp=0x8000000000080764
+       exec : va=0x40000000 pa=0x80767000 node=20
+       read : va=0x40100000 pa=0x80768000 node=22
+       write: va=0x40101000 pa=0x80769000 node=22
+       stack: va=0x401ff000 pa=0x8076a000 (R/W/U)
+editor: BEFORE:
+[sys] SYS_READ_NODE(node=22, buf_va=0x401fff40, len=128)
+initial scratch content.
+[sys] SYS_WRITE_NODE(node=22, buf_va=0x401fff40, len=19)
+editor: AFTER:
+[sys] SYS_READ_NODE(node=22, buf_va=0x401fff40, len=128)
+edited by syscall!
+[user] task #39 SYS_EXIT(0)
+[user] task #39 exit: cascade-tombstoned 3 edge(s) via CDT
+[user] task #39 exited cleanly with code 0
+user task returned 0
+helios> spawn ls 1
+helios> spawning M32 'ls' — traverse-cap to #1 (code #24)
+[user] task #40 mapped 4 regions, entry=0x40000000, satp=0x800000000008076c
+       exec : va=0x40000000 pa=0x8076f000 node=24
+       exec : va=0x40001000 pa=0x80770000 node=24
+       exec : va=0x40002000 pa=0x80771000 node=24
+       stack: va=0x401ff000 pa=0x80772000 (R/W/U)
+ls #1
+[sys] SYS_LIST_EDGES(src=1, buf_va=0x401ffd80, max=32)
+[sys] SYS_MAP_NODE(size=16384, flags=0) -> node #41, va=0x40100000, 4 page(s)
+  31 edges:
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=0, buf_va=0x401ffd80, len=32)
+    child     -> #2
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=1, buf_va=0x401ffd80, len=32)
+    child     -> #3
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=2, buf_va=0x401ffd80, len=32)
+    child     -> #11
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=3, buf_va=0x401ffd80, len=32)
+    child     -> #12
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=4, buf_va=0x401ffd80, len=32)
+    child     -> #13
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=5, buf_va=0x401ffd80, len=32)
+    child     -> #15
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=6, buf_va=0x401ffd80, len=32)
+    child     -> #16
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=7, buf_va=0x401ffd80, len=32)
+    child     -> #17
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=8, buf_va=0x401ffd80, len=32)
+    child     -> #18
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=9, buf_va=0x401ffd80, len=32)
+    child     -> #19
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=10, buf_va=0x401ffd80, len=32)
+    child     -> #20
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=11, buf_va=0x401ffd80, len=32)
+    child     -> #21
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=12, buf_va=0x401ffd80, len=32)
+    child     -> #22
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=13, buf_va=0x401ffd80, len=32)
+    child     -> #23
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=14, buf_va=0x401ffd80, len=32)
+    child     -> #24
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=15, buf_va=0x401ffd80, len=32)
+    child     -> #25
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=16, buf_va=0x401ffd80, len=32)
+    child     -> #26
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=17, buf_va=0x401ffd80, len=32)
+    child     -> #27
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=18, buf_va=0x401ffd80, len=32)
+    child     -> #28
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=19, buf_va=0x401ffd80, len=32)
+    child     -> #29
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=20, buf_va=0x401ffd80, len=32)
+    child     -> #30
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=21, buf_va=0x401ffd80, len=32)
+    child     -> #31
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=22, buf_va=0x401ffd80, len=32)
+    child     -> #32
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=23, buf_va=0x401ffd80, len=32)
+    child     -> #33
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=24, buf_va=0x401ffd80, len=32)
+    child     -> #34
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=25, buf_va=0x401ffd80, len=32)
+    child     -> #35
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=26, buf_va=0x401ffd80, len=32)
+    child     -> #36
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=27, buf_va=0x401ffd80, len=32)
+    child     -> #37
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=28, buf_va=0x401ffd80, len=32)
+    child     -> #38
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=29, buf_va=0x401ffd80, len=32)
+    child     -> #39
+[sys] SYS_READ_EDGE_LABEL(src=1, idx=30, buf_va=0x401ffd80, len=32)
+    child     -> #40
+  (cap: read=0 write=0 exec=0 traverse=0 grant=0 other=31)
+[user] task #40 SYS_EXIT(0)
+[user] task #40 exit: cascade-tombstoned 4 edge(s) via CDT
+[user] task #40 exited cleanly with code 0
+user task returned 0
+helios> spawn munmap
+helios> spawning post-M35 'munmap' — SYS_UNMAP_NODE allocation free (code #28)
+[user] task #42 mapped 4 regions, entry=0x40000000, satp=0x8000000000080777
+       exec : va=0x40000000 pa=0x8077a000 node=28
+       exec : va=0x40001000 pa=0x8077b000 node=28
+       exec : va=0x40002000 pa=0x8077c000 node=28
+       stack: va=0x401ff000 pa=0x8077d000 (R/W/U)
+munmap: exercising SYS_UNMAP_NODE (post-M35 Proposal B)
+  self id: #42
+[sys] SYS_MAP_NODE(size=32768, flags=0) -> node #43, va=0x40100000, 8 page(s)
+  A: filled+verified 32768 bytes at 0x40100000..0x40108000
+[sys] SYS_MAP_NODE(size=8192, flags=0) -> node #44, va=0x40108000, 2 page(s)
+  B: filled+verified 8192 bytes at 0x40108000..0x4010a000
+[sys] SYS_LIST_EDGES(src=42, buf_va=0x401ff910, max=32)
+  edges: A = #43, B = #44
+[sys] SYS_UNMAP_NODE(node_id=43) -- task #42
+[sys] unmapped node #43: 8 PT slot(s), 1 edge(s) tombstoned (cascade)
+  unmap_node(A=#43) OK
+[sys] SYS_LIST_EDGES(src=42, buf_va=0x401ff4f0, max=32)
+[sys] SYS_LIST_EDGES(src=42, buf_va=0x401ff4f0, max=32)
+  edge invariants after unmap(A): A gone, B present. OK.
+  B: write+verify after unmap(A) still works. PT survived.
+[sys] SYS_UNMAP_NODE: task #42 doesn't own node #43
+  unmap_node(A) twice: second call -> NotFound. OK.
+[sys] SYS_MAP_NODE(size=32768, flags=0) -> node #45, va=0x40100000, 8 page(s)
+  C: filled+verified 32768 bytes at 0x40100000 (= A's old base). SLOTS RECLAIMED.
+[sys] SYS_LIST_EDGES(src=42, buf_va=0x401ff4f0, max=32)
+[sys] SYS_LIST_EDGES(src=42, buf_va=0x401ff4f0, max=32)
+  final edges: A gone, B present, C present (own check via the live VA). OK.
+munmap: OK — SYS_UNMAP_NODE frees the allocation cleanly + slot is reusable.
+[user] task #42 SYS_EXIT(0)
+[user] task #42 exit: cascade-tombstoned 4 edge(s) via CDT
+[user] task #42 exited cleanly with code 0
+user task returned 0
+helios> 

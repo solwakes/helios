@@ -9,9 +9,17 @@ A/B/C shipped as M33/M34/M35. This is its successor.*
 
 *Proposal B (`SYS_UNMAP_NODE`) shipped 2026-05-19. See the "Post-M35
 Implementation Notes" section in `docs/design/capability-edges.md`
-and the UART transcript at `screenshots/post-m35-munmap-uart.txt`.
-Proposals A (multi-task scheduler M36) and C (shared-memory IPC)
-remain open.*
+and the UART transcript at `screenshots/post-m35-munmap-uart.txt`.*
+
+*Proposal A phase 1.0 (slot-widening + push/pop lifecycle) shipped
+2026-05-23. See the "Post-M35 Implementation Notes (Proposal A —
+M36 multi-task scheduler, phase 1.0 plumbing)" section in
+`docs/design/capability-edges.md`. The user-task slot is now a
+`Vec<ActiveUserTask>` holding 0 or 1 entries (single-active-task
+invariant preserved); phases 1.5 (shepherd-task spawn API),
+2 (timer-driven U-mode preemption with full register save/restore),
+and 3 (cross-task cap-cache + PT cleanup + litmus binaries) still
+open. Proposal C (shared-memory IPC) continues to wait on full M36.*
 
 ## Context
 

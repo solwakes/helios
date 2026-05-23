@@ -1024,16 +1024,63 @@ struct ActiveUserTask {
     mappings: Vec<Mapping>,
 }
 
-static mut ACTIVE: Option<ActiveUserTask> = None;
+// M36 phase 1 (plumbing): the user-task slot is now a `Vec`. Today
+// `USER_TASKS` holds 0 or 1 entries — the existing single-active-task
+// invariant is preserved. Phase 2 (timer-driven preemption between
+// user tasks) will allow multiple entries to be live at once, with
+// `CURRENT_USER_IDX` tracking which one is currently in U-mode.
+//
+// All syscall and fault handlers continue to access "the current user
+// task" via `active()` / `active_mut()`, whose signatures are
+// unchanged. Lifecycle: `push_user_task(t) -> idx` on entry,
+// `pop_user_task(idx)` on exit. The pair must be balanced; today the
+// pop always removes the last-pushed entry, which keeps `CURRENT_USER_IDX`
+// pointing at the (single) live slot in the meantime.
+static mut USER_TASKS: Vec<ActiveUserTask> = Vec::new();
+static mut CURRENT_USER_IDX: Option<usize> = None;
 
 fn active() -> Option<&'static ActiveUserTask> {
     #[allow(static_mut_refs)]
-    unsafe { ACTIVE.as_ref() }
+    unsafe {
+        let idx = CURRENT_USER_IDX?;
+        USER_TASKS.get(idx)
+    }
 }
 
 fn active_mut() -> Option<&'static mut ActiveUserTask> {
     #[allow(static_mut_refs)]
-    unsafe { ACTIVE.as_mut() }
+    unsafe {
+        let idx = CURRENT_USER_IDX?;
+        USER_TASKS.get_mut(idx)
+    }
+}
+
+/// Push a new `ActiveUserTask` onto the slot table and mark it current.
+/// Returns the task's index in `USER_TASKS`. Today USER_TASKS holds 0 or
+/// 1 entries at a time; the returned idx is always `USER_TASKS.len() - 1`
+/// after the push.
+fn push_user_task(t: ActiveUserTask) -> usize {
+    #[allow(static_mut_refs)]
+    unsafe {
+        USER_TASKS.push(t);
+        let idx = USER_TASKS.len() - 1;
+        CURRENT_USER_IDX = Some(idx);
+        idx
+    }
+}
+
+/// Pop the task at the given index off the slot table and clear the
+/// current-user pointer. The caller must pass the same `idx` it got from
+/// `push_user_task`. In phase 1.0 this always removes the last entry —
+/// phase 2 will need stable indices, at which point this will become a
+/// slot-marker rather than a `remove`.
+fn pop_user_task(idx: usize) {
+    #[allow(static_mut_refs)]
+    unsafe {
+        debug_assert!(idx < USER_TASKS.len(), "pop_user_task: idx out of bounds");
+        USER_TASKS.remove(idx);
+        CURRENT_USER_IDX = None;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1508,29 +1555,27 @@ pub fn run_user_task_from_code_node(
 
     let initial_mappings = aspace.mappings.clone();
 
-    unsafe {
-        ACTIVE = Some(ActiveUserTask {
-            task_node_id,
-            read_allowed,
-            write_allowed,
-            exec_allowed,
-            traverse_allowed,
-            grant_allowed,
-            kctx: kctx_ptr,
-            exit_code: 0,
-            faulted: false,
-            l0_pa: aspace.l0_pa,
-            mem_node_ids: Vec::new(),
-            mappings: initial_mappings,
-        });
-    }
+    let user_idx = push_user_task(ActiveUserTask {
+        task_node_id,
+        read_allowed,
+        write_allowed,
+        exec_allowed,
+        traverse_allowed,
+        grant_allowed,
+        kctx: kctx_ptr,
+        exit_code: 0,
+        faulted: false,
+        l0_pa: aspace.l0_pa,
+        mem_node_ids: Vec::new(),
+        mappings: initial_mappings,
+    });
 
     // setjmp: on the initial return (0) we drop to U-mode. On longjmp
     // from the trap handler we come back here with a nonzero value.
     let jmp = unsafe { user_setjmp(kctx_ptr) };
     if jmp == 0 {
         // Drop to U-mode. On exit/fault we'll come back via user_longjmp.
-        // We pass the ACTIVE kctx.sp at this point as the kernel sp for
+        // We pass the kctx.sp at this point as the kernel sp for
         // sscratch. enter_usermode_asm will install it and `sret`.
         //
         // Wait — we want sscratch = _current_ kernel sp at the time of
@@ -1557,7 +1602,7 @@ pub fn run_user_task_from_code_node(
         let a = active().unwrap();
         (a.exit_code, a.faulted, a.mem_node_ids.clone())
     };
-    unsafe { ACTIVE = None; }
+    pop_user_task(user_idx);
 
     // M35: cascade-tombstone every outgoing edge of the dying task.
     // Caps don't outlive the principal that granted them — any task
@@ -1731,22 +1776,20 @@ fn run_user_task_inner(task_node_id: u64, arg0: usize, arg1: usize) -> i64 {
 
     let initial_mappings = aspace.mappings.clone();
 
-    unsafe {
-        ACTIVE = Some(ActiveUserTask {
-            task_node_id,
-            read_allowed,
-            write_allowed,
-            exec_allowed,
-            traverse_allowed,
-            grant_allowed,
-            kctx: kctx_ptr,
-            exit_code: 0,
-            faulted: false,
-            l0_pa: aspace.l0_pa,
-            mem_node_ids: Vec::new(),
-            mappings: initial_mappings,
-        });
-    }
+    let user_idx = push_user_task(ActiveUserTask {
+        task_node_id,
+        read_allowed,
+        write_allowed,
+        exec_allowed,
+        traverse_allowed,
+        grant_allowed,
+        kctx: kctx_ptr,
+        exit_code: 0,
+        faulted: false,
+        l0_pa: aspace.l0_pa,
+        mem_node_ids: Vec::new(),
+        mappings: initial_mappings,
+    });
 
     let jmp = unsafe { user_setjmp(kctx_ptr) };
     if jmp == 0 {
@@ -1768,7 +1811,7 @@ fn run_user_task_inner(task_node_id: u64, arg0: usize, arg1: usize) -> i64 {
         let a = active().unwrap();
         (a.exit_code, a.faulted, a.mem_node_ids.clone())
     };
-    unsafe { ACTIVE = None; }
+    pop_user_task(user_idx);
 
     // M35: cascade-tombstone every outgoing edge of the dying task.
     // See `run_user_task_from_code_node` for rationale. Caps don't

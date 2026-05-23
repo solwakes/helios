@@ -674,6 +674,68 @@ discussion this implementation resolves.
    the syscall runs without faulting, not that it actually returns
    the slot to the bitmap.
 
+## Post-M35 Implementation Notes (Proposal A — M36 multi-task scheduler, phase 1.0 plumbing)
+
+Proposal A of `docs/design/proposals/post-m35-directions.md` is the
+big one — three sub-phases, ~600-900 LOC total, lifts every M35
+single-hart simplification. Phase 1.0 is data-structure widening
+only: no observable behavior change, no shepherd-task spawn API yet,
+no preemption between user tasks. The slot widens; the lifecycle is
+explicit; future phases ride on top.
+
+1. **The slot is now a `Vec`.** The single
+   `static mut ACTIVE: Option<ActiveUserTask>` has been replaced with
+   `static mut USER_TASKS: Vec<ActiveUserTask>` plus
+   `static mut CURRENT_USER_IDX: Option<usize>`. `active()` /
+   `active_mut()` keep their `Option<&ActiveUserTask>` /
+   `Option<&mut ActiveUserTask>` signatures and resolve via
+   `USER_TASKS.get(CURRENT_USER_IDX?)`. Every syscall handler and
+   the fault handler are unchanged — they still call
+   `active()` / `active_mut()`.
+
+2. **Push / pop is explicit.** Two new helpers replace the implicit
+   `ACTIVE = Some(t)` / `ACTIVE = None` pattern:
+   ```
+   fn push_user_task(t: ActiveUserTask) -> usize;  // returns idx
+   fn pop_user_task(idx: usize);
+   ```
+   `run_user_task_from_code_node` and `run_user_task_inner` each call
+   `push_user_task` after building the address space and
+   `pop_user_task` after the setjmp/longjmp return. The push/pop
+   pair is balanced; the returned `idx` is owned by the caller for
+   the duration of the U-mode run.
+
+3. **Phase 1.0 preserves the single-active-task invariant.** Today
+   `USER_TASKS` holds 0 or 1 entries at any moment. The kernel still
+   runs only one user task at a time, and the shell's `cmd_spawn`
+   call path is unchanged (synchronous `run_user_task_*` call).
+   Phase 1.5 (shepherd-task spawn API) and phase 2 (timer-driven
+   preemption + U-mode register save/restore in `ActiveUserTask`)
+   will allow multiple entries to be alive simultaneously.
+
+4. **Index stability.** `pop_user_task` removes the entry via
+   `Vec::remove(idx)`, which is fine while `USER_TASKS.len() <= 1`.
+   Phase 2 will need stable indices (so two concurrent tasks don't
+   shift each other's `idx`), at which point this becomes either a
+   slot-marker pattern (`Vec<Option<ActiveUserTask>>`) or a
+   monotonic-key map. The proposal text picks `Vec<ActiveUserTask>`;
+   phase 2 will refine.
+
+5. **Verified end-to-end.** Smoke run exercises `userdemo` (M29
+   read-cap + intentional violation), `editor` (M30 read+write +
+   cascade-tombstone on exit), `ls 1` (M32 list_edges +
+   SYS_MAP_NODE for the helios-std slab allocator), and `munmap`
+   (post-M35 Proposal B — full SYS_UNMAP_NODE + slot reclaim
+   round-trip). All four pass cleanly with the new
+   push/pop lifecycle.
+
+6. **What didn't change.** Cap caches still live in
+   `ActiveUserTask`. `SYS_REVOKE_EDGE`, `SYS_DELEGATE_EDGE`,
+   `SYS_MAP_NODE`, `SYS_UNMAP_NODE`, the cascade walk, the
+   per-task `mappings` table — all unchanged. Phase 1.0 is purely
+   the slot-shape migration; the syscall surface is byte-identical
+   to M35 + Proposal B.
+
 ---
 
-*Last reviewed: 2026-05-19 (post-M35 Proposal B shipped — `SYS_UNMAP_NODE` closes the per-allocation-free gap; M36 multi-task scheduler and Proposal C shared-memory IPC remain on the post-M35 directions list). Next review when M36 or material new cap-model work lands.*
+*Last reviewed: 2026-05-23 (post-M35 Proposal A phase 1.0 shipped — slot widened to a `Vec` + explicit push/pop lifecycle; phase 1.5 shepherd-task spawn API + phase 2 timer-driven U-mode preemption + phase 3 cross-task cap-cache and PT cleanup still pending). Proposal C shared-memory IPC continues to wait on full M36 (phases 1.5/2/3). Next review when phase 1.5 or material new cap-model work lands.*
