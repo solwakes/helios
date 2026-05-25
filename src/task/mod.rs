@@ -162,6 +162,30 @@ extern "C" fn task_entry() {
     }
 }
 
+/// Variant trampoline for tasks spawned via `spawn_with_arg`. Reads
+/// the function pointer from s0 and a single `usize` argument from s1.
+/// Both are saved by `spawn_with_arg` into the task's initial
+/// `TaskContext.s` array; the context switch into the new task loads
+/// them into s0/s1 before jumping here via ra.
+///
+/// Same shape as `task_entry` otherwise (call, mark done, yield).
+#[no_mangle]
+extern "C" fn task_entry_with_arg() {
+    let fp: usize;
+    let arg: usize;
+    unsafe {
+        core::arch::asm!("mv {}, s0", out(reg) fp);
+        core::arch::asm!("mv {}, s1", out(reg) arg);
+    }
+    let f: fn(usize) = unsafe { core::mem::transmute(fp) };
+    f(arg);
+    current_task_done();
+    yield_now();
+    loop {
+        unsafe { core::arch::asm!("wfi") };
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -248,6 +272,95 @@ pub fn spawn(name: &str, f: fn()) -> usize {
 
     tasks_mut().push(task);
     id
+}
+
+/// Spawn a new task with the given name, function, and a single `usize`
+/// argument. The function is called as `f(arg)` from the new task's
+/// stack via the `task_entry_with_arg` trampoline.
+///
+/// This is the building block for the M36 phase 1.5 kernel-mode
+/// shepherd task: the shepherd's entry function takes the user-task
+/// graph node id as its argument, then drops into U-mode for that task.
+/// Today only one shepherd is live at a time (cmd_spawn still blocks),
+/// but the surface is in place for phase 2's preempt-and-multi-task.
+pub fn spawn_with_arg(name: &str, f: fn(usize), arg: usize) -> usize {
+    let id = unsafe {
+        let id = NEXT_TASK_ID;
+        NEXT_TASK_ID += 1;
+        id
+    };
+
+    let stack = alloc::vec![0u8; TASK_STACK_SIZE];
+    let stack_top = (stack.as_ptr() as usize + TASK_STACK_SIZE) & !0xF;
+    let ctx = TaskContext {
+        ra: task_entry_with_arg as *const () as usize,
+        sp: stack_top,
+        s: {
+            let mut s = [0usize; 12];
+            s[0] = f as usize; // s0 = function pointer
+            s[1] = arg;        // s1 = argument
+            s
+        },
+    };
+
+    let tasks_node_id = unsafe { TASKS_NODE_ID };
+    let g = graph::get_mut();
+    let node_id = g.create_node(NodeType::System, name);
+    g.add_edge(tasks_node_id, "child", node_id);
+
+    if let Some(node) = g.get_node_mut(node_id) {
+        let info = alloc::format!(
+            "state: ready\nstack: {} bytes\narg: {:#x}",
+            TASK_STACK_SIZE, arg
+        );
+        node.content = info.into_bytes();
+    }
+
+    let task = Task {
+        id,
+        name: String::from(name),
+        state: TaskState::Ready,
+        context: ctx,
+        stack,
+        graph_node_id: node_id,
+        preempt_count: 0,
+    };
+
+    tasks_mut().push(task);
+    id
+}
+
+/// Look up a task's state by id. Returns `None` if the task id is not
+/// in the table. Tasks are not removed from the table after they exit
+/// (per the M35-era design — the graph node holds the post-mortem),
+/// so a `Done` result is a stable observation.
+pub fn task_state(id: usize) -> Option<TaskState> {
+    tasks().iter().find(|t| t.id == id).map(|t| t.state)
+}
+
+/// Block the current task until the task with the given id has
+/// transitioned to `Done`. Returns `false` immediately if the id is
+/// unknown (no such task ever existed), `true` once the target is
+/// observed `Done`. Cooperative — calls `yield_now()` between checks,
+/// so other ready tasks (including the target) get to run.
+///
+/// Intended for the shepherd-task pattern: cmd_spawn calls
+/// `spawn_with_arg("user-shepherd", shepherd_entry, task_node_id)`
+/// then `wait_for_task(shepherd_id)` to preserve today's synchronous
+/// blocking shape. Once timer-driven preemption lands (M36 phase 2),
+/// the wait is what lets multiple shepherds interleave under the
+/// same kernel scheduler.
+pub fn wait_for_task(id: usize) -> bool {
+    if task_state(id).is_none() {
+        return false;
+    }
+    loop {
+        match task_state(id) {
+            Some(TaskState::Done) => return true,
+            Some(_) => yield_now(),
+            None => return false, // shouldn't happen — tasks aren't removed
+        }
+    }
 }
 
 /// Mark the currently running task as Done.
@@ -608,4 +721,44 @@ pub fn spawn_pingpong() {
     let id1 = spawn("ping", demo_ping);
     let id2 = spawn("pong", demo_pong);
     crate::println!("[pingpong] Spawned ping (task #{}) and pong (task #{})", id1, id2);
+}
+
+// ---------------------------------------------------------------------------
+// M36 phase 1.5: spawn-with-arg + wait_for_task demo
+// ---------------------------------------------------------------------------
+//
+// `argecho` exercises the two new task-module primitives without
+// touching the user.rs / U-mode path. A kernel task is spawned with
+// `spawn_with_arg`, given a usize argument that it prints and squares.
+// The caller (the shell task, via `cmd_spawn`) then waits for it via
+// `wait_for_task`. Together this verifies:
+//
+//   1. `task_entry_with_arg` correctly recovers fp + arg from s0/s1.
+//   2. `spawn_with_arg` schedules the new task as Ready.
+//   3. `wait_for_task` yields until the child becomes Done.
+//   4. Round-trip works end-to-end with the existing kernel scheduler.
+//
+// This is the building block for M36 phase 1.5 proper, where the
+// spawned task is a *kernel shepherd* that itself calls `run_user_task_inner`
+// for some user-task graph node. Today the demo just runs in kernel
+// space — the path to a real shepherd is a thin wrapper on top.
+
+/// Body of an `argecho` task: prints its arg and a small computation,
+/// then exits. Used by `spawn_argecho_demo`.
+pub fn demo_argecho(arg: usize) {
+    crate::println!("[argecho] task entered with arg = {} (={:#x})", arg, arg);
+    let sq = arg.wrapping_mul(arg);
+    crate::println!("[argecho] arg*arg = {} — exiting", sq);
+}
+
+/// Demo: spawn an `argecho` task with the given argument, then
+/// `wait_for_task` until it's done. Returns the observed Done state.
+/// Drives the M36 phase 1.5 plumbing under a kernel scheduler that
+/// already round-robins cooperative tasks.
+pub fn spawn_argecho_demo(arg: usize) -> bool {
+    let id = spawn_with_arg("argecho", demo_argecho, arg);
+    crate::println!("[argecho] spawned task #{} with arg={:#x}", id, arg);
+    let done = wait_for_task(id);
+    crate::println!("[argecho] wait_for_task(#{}) -> {}", id, done);
+    done
 }

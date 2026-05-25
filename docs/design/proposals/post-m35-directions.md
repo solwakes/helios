@@ -14,12 +14,26 @@ and the UART transcript at `screenshots/post-m35-munmap-uart.txt`.*
 *Proposal A phase 1.0 (slot-widening + push/pop lifecycle) shipped
 2026-05-23. See the "Post-M35 Implementation Notes (Proposal A —
 M36 multi-task scheduler, phase 1.0 plumbing)" section in
-`docs/design/capability-edges.md`. The user-task slot is now a
-`Vec<ActiveUserTask>` holding 0 or 1 entries (single-active-task
-invariant preserved); phases 1.5 (shepherd-task spawn API),
-2 (timer-driven U-mode preemption with full register save/restore),
-and 3 (cross-task cap-cache + PT cleanup + litmus binaries) still
-open. Proposal C (shared-memory IPC) continues to wait on full M36.*
+`docs/design/capability-edges.md`.*
+
+*Proposal A phase 1.5 **plumbing** shipped 2026-05-24 (this
+commit): `task::spawn_with_arg(name, f, arg) -> id` and
+`task::wait_for_task(id) -> bool` are now in `src/task/mod.rs`,
+exercised by the `argecho` shell builtin. The new `task_entry_with_arg`
+trampoline reads fp from s0 and a single `usize` argument from s1.
+Together these are the building blocks the shepherd-task pattern
+needs — kernel task that owns one `ActiveUserTask` slot and calls
+`run_user_task_inner` for a specific user-task graph node id. Today
+the `argecho` task runs entirely in kernel space (no U-mode drop);
+wiring `cmd_spawn` through a shepherd that calls
+`run_user_task_inner` is the next move and stays a single-session
+ship. Transcript: `screenshots/m36-phase1.5-argecho-uart.txt`.*
+
+*Phases still open: 1.5 **integration** (the shepherd wrapper itself
++ cmd_spawn rewiring), 2 (timer-driven U-mode preemption with full
+register save/restore), and 3 (cross-task cap-cache + PT cleanup +
+litmus binaries). Proposal C (shared-memory IPC) continues to wait
+on full M36.*
 
 ## Context
 

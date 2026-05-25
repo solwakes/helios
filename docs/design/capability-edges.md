@@ -736,6 +736,57 @@ explicit; future phases ride on top.
    the slot-shape migration; the syscall surface is byte-identical
    to M35 + Proposal B.
 
+## Post-M35 Implementation Notes (Proposal A — M36 phase 1.5 plumbing)
+
+Phase 1.5 splits into **plumbing** (this section, shipped 2026-05-24)
+and **integration** (still open — wiring `cmd_spawn` through a
+kernel shepherd that calls `run_user_task_inner`). The plumbing is
+two task-module primitives plus a smoke test; the integration is the
+single-session ship that follows.
+
+7. **`spawn_with_arg(name, f, arg) -> id` and a paired trampoline.**
+   The existing `spawn(name, f: fn()) -> id` uses `s0` to carry the
+   function pointer to a `task_entry` trampoline that calls it. The
+   shepherd task needs one extra word — the user-task graph node id
+   — to know which task to drop into. The new
+   `task_entry_with_arg` trampoline reads fp from `s0` and a `usize`
+   argument from `s1`, then calls `f(arg)`. `spawn_with_arg` is
+   otherwise identical to `spawn`: same stack allocation, same graph
+   node creation, same `Ready` state. The argument is recorded in
+   the task graph node's `content` (`arg: 0x...`) for `ps` /
+   `cat <task_id>` introspection.
+
+8. **`wait_for_task(id) -> bool`.** Cooperative join: returns `true`
+   once the target task is observed `Done`, `false` if the id was
+   never in the table. Polls `task_state(id)` between `yield_now()`
+   calls. Together with `spawn_with_arg`, this lets a caller preserve
+   the synchronous shape of `cmd_spawn` even when the work runs in a
+   separate kernel task — exactly what the shepherd integration needs.
+   Tasks aren't removed from the table after they exit (their graph
+   nodes hold the post-mortem state), so a `Done` observation is
+   stable across yields.
+
+9. **`argecho` demo (smoke test).** `spawn argecho [n]` in the shell
+   exercises both primitives end-to-end: kernel task spawned with
+   `arg=n`, prints `arg` and `arg*arg`, exits; the shell task then
+   `wait_for_task`s on the child and prints the observed state. The
+   round-trip verifies (i) `task_entry_with_arg` correctly recovers
+   fp + arg, (ii) `spawn_with_arg` schedules the new task as `Ready`,
+   (iii) `wait_for_task` yields until `Done`, (iv) the existing
+   `spawn()` path is unchanged (`spawn pingpong` still works after
+   the additions). Transcript:
+   `screenshots/m36-phase1.5-argecho-uart.txt`.
+
+10. **What remains for phase 1.5 integration.** A new function
+    `user::spawn_user_shepherd(task_node_id, arg0, arg1)` will use
+    `spawn_with_arg` to schedule a kernel shepherd whose entry calls
+    `run_user_task_inner(task_node_id, arg0, arg1)`. The caller
+    (today: shell `cmd_spawn`) calls `wait_for_task` on the shepherd
+    id. Result of the user task needs to be communicated back — easiest
+    today via a small static slot keyed by shepherd-id, since
+    `cmd_spawn` still blocks (one shepherd live at a time). Phase 2
+    will rework this once preemption + concurrent shepherds matter.
+
 ---
 
-*Last reviewed: 2026-05-23 (post-M35 Proposal A phase 1.0 shipped — slot widened to a `Vec` + explicit push/pop lifecycle; phase 1.5 shepherd-task spawn API + phase 2 timer-driven U-mode preemption + phase 3 cross-task cap-cache and PT cleanup still pending). Proposal C shared-memory IPC continues to wait on full M36 (phases 1.5/2/3). Next review when phase 1.5 or material new cap-model work lands.*
+*Last reviewed: 2026-05-24 (post-M35 Proposal A phase 1.5 plumbing shipped — `spawn_with_arg` + `wait_for_task` + `argecho` smoke test; integration with `cmd_spawn` through a kernel shepherd that calls `run_user_task_inner` is next). Phase 2 timer-driven U-mode preemption + phase 3 cross-task cap-cache and PT cleanup still pending. Proposal C shared-memory IPC continues to wait on full M36. Next review when phase 1.5 integration or material new cap-model work lands.*

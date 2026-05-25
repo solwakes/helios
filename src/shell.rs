@@ -1300,7 +1300,7 @@ fn cmd_ps() {
 fn cmd_spawn(name: &str, arg: &str, arg2: &str) {
     if name.is_empty() {
         crate::println!("Usage: spawn <name|node_id> [arg] [arg2]");
-        crate::println!("  Kernel demos: counter, fibonacci, busyloop, producer, consumer, pingpong");
+        crate::println!("  Kernel demos: counter, fibonacci, busyloop, producer, consumer, pingpong, argecho [n]");
         crate::println!("  User space:   spawn <code_node_id>  (drops to U-mode with edge-based caps)");
         crate::println!("                spawn userdemo  (M29: read/forbidden demo)");
         crate::println!("                spawn baddemo   (M29: MMU page-fault demo)");
@@ -1905,6 +1905,14 @@ fn cmd_spawn(name: &str, arg: &str, arg2: &str) {
         "pingpong" => {
             // Special case: spawns two tasks
             crate::task::spawn_pingpong();
+            return;
+        }
+        "argecho" => {
+            // M36 phase 1.5 demo — exercises spawn_with_arg + wait_for_task.
+            // Argument is the first positional arg (defaults to 7).
+            let v = parse_usize(arg).unwrap_or(7);
+            let ok = crate::task::spawn_argecho_demo(v);
+            crate::println!("argecho demo: wait_for_task -> {}", ok);
             return;
         }
         _ => {}
