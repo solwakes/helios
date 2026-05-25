@@ -1714,7 +1714,16 @@ pub fn run_user_task_with_caps(
         id
     };
 
-    run_user_task_inner(task_node_id, arg0, arg1)
+    // M36 phase 1.5 integration: route the user-task run through a
+    // kernel-mode shepherd task instead of calling `run_user_task_inner`
+    // directly on the caller's stack. Same synchronous shape, same
+    // return value — but the U-mode work now runs on a dedicated kernel
+    // task with its own 16 KiB stack rather than chewing into the
+    // caller's (typically the shell's) stack. Slot-based arg/result
+    // passing is safe today because `wait_for_task` blocks the caller
+    // until the shepherd exits — only one shepherd is staged-and-live
+    // at any time.
+    run_user_task_via_shepherd(task_node_id, arg0, arg1)
 }
 
 /// Inner runner: build page table, drop to U-mode, collect result.
@@ -1862,6 +1871,140 @@ fn run_user_task_inner(task_node_id: u64, arg0: usize, arg1: usize) -> i64 {
     }
 
     code
+}
+
+// ---------------------------------------------------------------------------
+// M36 phase 1.5 integration: kernel-mode shepherd task for user-task runs
+// ---------------------------------------------------------------------------
+//
+// Phase 1.0 widened the user-task slot to a Vec; phase 1.5 plumbing added
+// `task::spawn_with_arg` + `task::wait_for_task`. Integration wires those
+// together: a user task no longer runs on the *caller's* stack (the shell
+// task's stack, for `cmd_spawn`), it runs on its own dedicated kernel task
+// — the **shepherd** — whose only job is to call `run_user_task_inner` once
+// and exit. The caller waits via `wait_for_task` and reads the exit code
+// from a static slot. The synchronous shape of `cmd_spawn` is preserved
+// (the shell still blocks until the user task exits), but the user task
+// now runs under the same kernel scheduler that already manages the rest
+// of the kernel tasks.
+//
+// Why bother today, when only one shepherd is live at a time? Two reasons:
+//
+//   1. **Stack isolation.** A user task that fault-handles deeply or maps
+//      large local Vecs in `run_user_task_inner` consumes the *caller's*
+//      kernel stack today. The shell task is finite-stack like any other
+//      kernel task. Routing through a fresh 16 KiB shepherd stack keeps
+//      shell context independent of user-task depth.
+//
+//   2. **Phase 2 readiness.** Timer-driven U-mode preemption (phase 2)
+//      needs to save register state into a *per-task* slot and switch to
+//      another shepherd. The structure for that is "one shepherd per
+//      concurrent user task" — already what integration produces, just
+//      with N=1 for now. Phase 2 lifts the N=1 limit by no longer blocking
+//      `cmd_spawn` on `wait_for_task`.
+//
+// Argument passing: `spawn_with_arg` carries one usize. `run_user_task_inner`
+// takes three values (task_node_id: u64, arg0: usize, arg1: usize). We
+// stage them in a single static slot before spawning. Safe because today's
+// `cmd_spawn` blocks on `wait_for_task` — only one shepherd is staged-and-
+// live at any moment. Phase 2 will need the slot keyed by shepherd id.
+
+/// Shepherd staging slot. Holds the inbound arguments for the most
+/// recently spawned (and not-yet-collected) user-task shepherd, and the
+/// outbound exit code once that shepherd completes.
+struct ShepherdSlot {
+    task_node_id: u64,
+    arg0: usize,
+    arg1: usize,
+    result: i64,
+}
+
+static mut SHEPHERD_SLOT: Option<ShepherdSlot> = None;
+
+/// Kernel entry for a user-task shepherd. Reads its inputs from
+/// `SHEPHERD_SLOT`, runs `run_user_task_inner` once, stashes the exit
+/// code back into the slot, and returns (the task module's trampoline
+/// then marks the shepherd `Done`).
+///
+/// The `_arg` parameter is ignored — we couldn't fit three values in
+/// one usize anyway, so all inputs come from the slot.
+fn shepherd_entry(_arg: usize) {
+    let (task_node_id, arg0, arg1) = unsafe {
+        #[allow(static_mut_refs)]
+        match SHEPHERD_SLOT.as_ref() {
+            Some(s) => (s.task_node_id, s.arg0, s.arg1),
+            None => {
+                crate::println!("[shepherd] entered with empty slot — exiting");
+                return;
+            }
+        }
+    };
+    let rc = run_user_task_inner(task_node_id, arg0, arg1);
+    unsafe {
+        #[allow(static_mut_refs)]
+        if let Some(slot) = SHEPHERD_SLOT.as_mut() {
+            slot.result = rc;
+        }
+    }
+}
+
+/// Phase 1.5 integration: schedule `run_user_task_inner` on a fresh
+/// kernel shepherd task. Returns the shepherd's kernel task id.
+///
+/// The caller is responsible for:
+///   1. `task::wait_for_task(id)` — blocks until the shepherd exits.
+///   2. `collect_user_shepherd_result()` — reads the U-mode exit code
+///      from the static slot. Must be called before any next
+///      `spawn_user_shepherd`, or that next call will overwrite the slot.
+///
+/// Synchronous wrapper around this triple: `run_user_task_via_shepherd`.
+pub fn spawn_user_shepherd(task_node_id: u64, arg0: usize, arg1: usize) -> usize {
+    // Stage inputs before the new task can be picked up by the scheduler.
+    // We're not in a preemptive region — kernel tasks only switch at
+    // `yield_now`/timer points — so this is a plain store, no fence.
+    unsafe {
+        SHEPHERD_SLOT = Some(ShepherdSlot {
+            task_node_id,
+            arg0,
+            arg1,
+            result: -1,
+        });
+    }
+    crate::task::spawn_with_arg("user-shepherd", shepherd_entry, 0)
+}
+
+/// Phase 1.5 integration: collect the U-mode exit code from the most
+/// recently completed shepherd. Returns -1 if no shepherd has been run,
+/// or if the slot was somehow cleared. Clears the slot on read so the
+/// next `spawn_user_shepherd` starts fresh.
+pub fn collect_user_shepherd_result() -> i64 {
+    unsafe {
+        #[allow(static_mut_refs)]
+        let rc = SHEPHERD_SLOT.as_ref().map(|s| s.result).unwrap_or(-1);
+        SHEPHERD_SLOT = None;
+        rc
+    }
+}
+
+/// Phase 1.5 integration: spawn-wait-collect in one synchronous call.
+/// Equivalent to today's direct `run_user_task_inner` call from the
+/// shell task's perspective — same blocking, same return value — but
+/// the U-mode work now runs on a dedicated kernel task with its own
+/// stack rather than on the caller's stack.
+pub fn run_user_task_via_shepherd(task_node_id: u64, arg0: usize, arg1: usize) -> i64 {
+    let shepherd_id = spawn_user_shepherd(task_node_id, arg0, arg1);
+    let ok = crate::task::wait_for_task(shepherd_id);
+    if !ok {
+        // shouldn't happen — spawn_with_arg always inserts into the
+        // task table — but treat it as a fault rather than panicking.
+        crate::println!(
+            "[user] shepherd #{} not found in task table after spawn",
+            shepherd_id
+        );
+        unsafe { SHEPHERD_SLOT = None; }
+        return -1;
+    }
+    collect_user_shepherd_result()
 }
 
 /// a0 at U-mode entry = the id of the task's first `read` edge target (if

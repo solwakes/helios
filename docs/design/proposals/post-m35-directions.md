@@ -16,24 +16,39 @@ and the UART transcript at `screenshots/post-m35-munmap-uart.txt`.*
 M36 multi-task scheduler, phase 1.0 plumbing)" section in
 `docs/design/capability-edges.md`.*
 
-*Proposal A phase 1.5 **plumbing** shipped 2026-05-24 (this
-commit): `task::spawn_with_arg(name, f, arg) -> id` and
+*Proposal A phase 1.5 **plumbing** shipped 2026-05-24:
+`task::spawn_with_arg(name, f, arg) -> id` and
 `task::wait_for_task(id) -> bool` are now in `src/task/mod.rs`,
 exercised by the `argecho` shell builtin. The new `task_entry_with_arg`
 trampoline reads fp from s0 and a single `usize` argument from s1.
-Together these are the building blocks the shepherd-task pattern
-needs — kernel task that owns one `ActiveUserTask` slot and calls
-`run_user_task_inner` for a specific user-task graph node id. Today
-the `argecho` task runs entirely in kernel space (no U-mode drop);
-wiring `cmd_spawn` through a shepherd that calls
-`run_user_task_inner` is the next move and stays a single-session
-ship. Transcript: `screenshots/m36-phase1.5-argecho-uart.txt`.*
+Transcript: `screenshots/m36-phase1.5-argecho-uart.txt`.*
 
-*Phases still open: 1.5 **integration** (the shepherd wrapper itself
-+ cmd_spawn rewiring), 2 (timer-driven U-mode preemption with full
-register save/restore), and 3 (cross-task cap-cache + PT cleanup +
-litmus binaries). Proposal C (shared-memory IPC) continues to wait
-on full M36.*
+*Proposal A phase 1.5 **integration** shipped 2026-05-25 (this
+commit): `user::spawn_user_shepherd(task_node_id, arg0, arg1) -> id`,
+`user::collect_user_shepherd_result() -> i64`, and a synchronous
+wrapper `user::run_user_task_via_shepherd(...)` are now in
+`src/user.rs`. `run_user_task_with_caps`'s final call is
+`run_user_task_via_shepherd(...)` instead of
+`run_user_task_inner(...)` — every modern-path user task (who,
+explorer, editor, naughty, hello, ls, cat, mmap, bigalloc, gtree,
+gfollow, gwrite, munmap, cdtsmoke-α/β) now drops to U-mode on a
+dedicated kernel shepherd task with its own 16 KiB stack rather
+than chewing the shell task's stack. Argument and result passing
+goes through a single static `SHEPHERD_SLOT`, safe today because
+`wait_for_task` blocks the caller — only one shepherd is
+staged-and-live at any time. The legacy M29
+`run_user_task_from_code_node` path (`userdemo`, `baddemo`)
+continues to run directly on the caller's stack — its rewiring is
+a small follow-on if a future session calls for it. Transcript:
+`screenshots/m36-phase1.5-integration-uart.txt` (8 modern-path
+user tasks, 8 corresponding `user-shepherd` entries in `ps`).*
+
+*Phases still open: 2 (timer-driven U-mode preemption with full
+register save/restore — also lifts `cmd_spawn`'s blocking shape
+so multiple shepherds can be live at once, at which point
+`SHEPHERD_SLOT` becomes a per-shepherd-id map), and 3 (cross-task
+cap-cache + PT cleanup + litmus binaries). Proposal C
+(shared-memory IPC) continues to wait on full M36.*
 
 ## Context
 

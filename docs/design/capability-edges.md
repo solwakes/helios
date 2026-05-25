@@ -777,16 +777,62 @@ single-session ship that follows.
    the additions). Transcript:
    `screenshots/m36-phase1.5-argecho-uart.txt`.
 
-10. **What remains for phase 1.5 integration.** A new function
-    `user::spawn_user_shepherd(task_node_id, arg0, arg1)` will use
-    `spawn_with_arg` to schedule a kernel shepherd whose entry calls
-    `run_user_task_inner(task_node_id, arg0, arg1)`. The caller
-    (today: shell `cmd_spawn`) calls `wait_for_task` on the shepherd
-    id. Result of the user task needs to be communicated back — easiest
-    today via a small static slot keyed by shepherd-id, since
-    `cmd_spawn` still blocks (one shepherd live at a time). Phase 2
-    will rework this once preemption + concurrent shepherds matter.
+10. **Phase 1.5 integration (shipped 2026-05-25).** Three new entries
+    in `src/user.rs`:
+    - `spawn_user_shepherd(task_node_id, arg0, arg1) -> usize` stages
+      `(task_node_id, arg0, arg1)` in a static `SHEPHERD_SLOT`, then
+      calls `task::spawn_with_arg("user-shepherd", shepherd_entry, 0)`.
+      Returns the shepherd's kernel task id.
+    - `collect_user_shepherd_result() -> i64` reads `SHEPHERD_SLOT.result`
+      and clears the slot. Must be called after `wait_for_task`
+      returns and before the next `spawn_user_shepherd`.
+    - `run_user_task_via_shepherd(task_node_id, arg0, arg1) -> i64`
+      is the synchronous wrapper: spawn + wait + collect, returning
+      the U-mode exit code.
+
+    The `shepherd_entry(_arg: usize)` function reads its three
+    inputs from `SHEPHERD_SLOT`, calls `run_user_task_inner`, then
+    stashes the exit code back into the slot. The `_arg` parameter
+    is ignored because `spawn_with_arg` only carries one usize and
+    we need three values.
+
+    `run_user_task_with_caps`'s final call is now
+    `run_user_task_via_shepherd(...)` instead of
+    `run_user_task_inner(...)` — every modern-path user task now
+    drops to U-mode on a dedicated kernel shepherd task with its own
+    16 KiB stack rather than on the caller's stack. The legacy
+    `run_user_task_from_code_node` path (used only by `userdemo` /
+    `baddemo`) continues to call `run_user_task_inner` directly;
+    rewiring is a small follow-on if needed.
+
+    Why slot-based arg/result instead of packing into the
+    single-`usize` arg of `spawn_with_arg`? Three values
+    (`task_node_id: u64`, `arg0: usize`, `arg1: usize`) plus a
+    return slot don't fit in one usize without heap allocation, and
+    the slot pattern is the natural target for phase 2 anyway —
+    when `cmd_spawn` stops blocking, the slot becomes a map keyed
+    by shepherd id, and the same `spawn_user_shepherd` API survives.
+
+    Transcript: `screenshots/m36-phase1.5-integration-uart.txt`.
+    Eight modern-path user tasks (who, explorer, editor, naughty,
+    hello, mmap, cdtsmoke-α, cdtsmoke-β) all return correctly
+    through the shepherd path; `ps` shows eight `user-shepherd`
+    entries in `Done` state. CDT cascade-tombstoning continues to
+    fire on shepherd exit (5 edges for α, 7 for β) — the cleanup
+    machinery in `run_user_task_inner` is unchanged, just runs on
+    the shepherd's stack now.
+
+11. **What remains for phase 2.** Lift `cmd_spawn`'s blocking shape
+    so multiple shepherds can be live concurrently. Two coupled
+    moves: (a) timer-driven U-mode preemption — the supervisor timer
+    interrupt that currently preempts kernel tasks needs to also
+    save/restore U-mode register state into the active task's
+    `ActiveUserTask` slot, and (b) replace the single `SHEPHERD_SLOT`
+    with a per-shepherd-id map so concurrent shepherds don't
+    overwrite each other's args/results. M35 simplifications (a) and
+    (b) (cap-cache mutation only touches the active task; PT
+    invalidation only on the active task) get lifted in phase 3.
 
 ---
 
-*Last reviewed: 2026-05-24 (post-M35 Proposal A phase 1.5 plumbing shipped — `spawn_with_arg` + `wait_for_task` + `argecho` smoke test; integration with `cmd_spawn` through a kernel shepherd that calls `run_user_task_inner` is next). Phase 2 timer-driven U-mode preemption + phase 3 cross-task cap-cache and PT cleanup still pending. Proposal C shared-memory IPC continues to wait on full M36. Next review when phase 1.5 integration or material new cap-model work lands.*
+*Last reviewed: 2026-05-25 (post-M35 Proposal A phase 1.5 integration shipped — `spawn_user_shepherd` + `collect_user_shepherd_result` + `run_user_task_via_shepherd`, all modern-path user tasks now route through a kernel-mode shepherd). Phase 2 timer-driven U-mode preemption + per-shepherd-id slot map next. Phase 3 cross-task cap-cache and PT cleanup still pending. Proposal C shared-memory IPC continues to wait on full M36. Next review when phase 2 or material new cap-model work lands.*
