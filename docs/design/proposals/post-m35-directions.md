@@ -50,6 +50,13 @@ so multiple shepherds can be live at once, at which point
 cap-cache + PT cleanup + litmus binaries). Proposal C
 (shared-memory IPC) continues to wait on full M36.*
 
+*Phase 2 detailed design landed 2026-05-26 in
+`m36-phase2-preemption.md` (sibling proposal doc). Splits the
+implementation into four sub-phases (2.0 frame-stash + longjmp
+sentinel, 2.1 `resume_user_frame` asm, 2.2 leaked-box slot map,
+2.3 `cmd_spawn-async` + coexist-α litmus), each ship-able in one
+session.*
+
 ## Context
 
 M35 leaned on a "single active user task" assumption at three
